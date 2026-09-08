@@ -39,16 +39,17 @@ def format_message(listing: Listing) -> str:
 
 
 class TelegramNotifier:
-    def __init__(self, bot_token: str, chat_id: str, client: httpx.Client | None = None):
+    def __init__(self, bot_token: str, client: httpx.Client | None = None):
         self._bot_token = bot_token
-        self._chat_id = chat_id
         self._client = client or httpx.Client(timeout=10.0)
 
-    def send_new_listings(self, search_name: str, listings: list[Listing]) -> None:
+    def send_new_listings(self, chat_id: int, search_name: str, listings: list[Listing]) -> None:
         if not listings:
             return
         if len(listings) == 1:
-            self._send_text(f"New listing for '{search_name}':\n\n{format_message(listings[0])}")
+            self._send_text(
+                chat_id, f"New listing for '{search_name}':\n\n{format_message(listings[0])}"
+            )
             return
 
         # Greedily pack listing bodies into messages that stay under Telegram's
@@ -61,7 +62,7 @@ class TelegramNotifier:
             body = format_message(listing)
             added = len(body) + (2 if chunk else 0)
             if chunk and chunk_len + added > MAX_MESSAGE_CHARS:
-                self._send_text(prefix + "\n\n".join(chunk))
+                self._send_text(chat_id, prefix + "\n\n".join(chunk))
                 prefix = ""
                 chunk = [body]
                 chunk_len = len(body)
@@ -69,17 +70,30 @@ class TelegramNotifier:
                 chunk.append(body)
                 chunk_len += added
         if chunk:
-            self._send_text(prefix + "\n\n".join(chunk))
+            self._send_text(chat_id, prefix + "\n\n".join(chunk))
 
-    def send_alert(self, text: str) -> None:
-        self._send_text(text)
+    def send_alert(self, chat_id: int, text: str) -> None:
+        self._send_text(chat_id, text)
 
-    def _send_text(self, text: str) -> None:
+    def send_text(self, chat_id: int, text: str) -> None:
+        self._send_text(chat_id, text)
+
+    def send_document(self, chat_id: int, file_path: str, filename: str) -> None:
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendDocument"
+        with open(file_path, "rb") as f:
+            files = {"document": (filename, f)}
+            try:
+                response = self._client.post(url, data={"chat_id": chat_id}, files=files)
+                response.raise_for_status()
+            except httpx.HTTPError as e:
+                raise RuntimeError(f"Telegram document send failed: {type(e).__name__}") from None
+
+    def _send_text(self, chat_id: int, text: str) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendMessage"
         failure_name = ""
         for attempt in range(2):  # one initial attempt plus one retry
             try:
-                response = self._client.post(url, data={"chat_id": self._chat_id, "text": text})
+                response = self._client.post(url, data={"chat_id": chat_id, "text": text})
                 response.raise_for_status()
                 return
             except httpx.HTTPError as e:
