@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from .config import load_config
 from .db import SeenStore
@@ -16,6 +17,7 @@ TUNNEL_INSTRUCTIONS = (
 
 
 async def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     config = load_config()
     seen_store = SeenStore(config.db_path)
     notifier = TelegramNotifier(config.telegram_bot_token, config.telegram_chat_id)
