@@ -9,14 +9,13 @@ from typing import Awaitable, Callable
 
 from .challenge import is_challenge_page
 from .db import SeenStore
+from .filters import passes_filters
 from .parser import parse_listings
+from .subscriptions import UserSearch
 
 FetchHtmlFn = Callable[[str], Awaitable[str]]
 
 CHALLENGE_REMINDER_AFTER_SECONDS = 30 * 60
-
-# If every search fails for this many consecutive rounds, assume the browser is
-# dead: alert, then exit so systemd's Restart=on-failure gives us a fresh one.
 MAX_CONSECUTIVE_ROUND_FAILURES = 5
 
 logger = logging.getLogger("carouauto")
@@ -34,17 +33,18 @@ class SearchState:
     last_polled_at: datetime | None = None
 
 
-async def run_cycle(
-    search_name: str,
-    search_url: str,
+async def run_cycle_for_url(
+    url: str,
+    subscribers: list[UserSearch],
     state: SearchState,
     fetch_html: FetchHtmlFn,
     seen_store: SeenStore,
     notifier,
     tunnel_instructions: str,
+    admin_chat_id: int,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> None:
-    html = await fetch_html(search_url)
+    html = await fetch_html(url)
 
     if is_challenge_page(html):
         if not state.paused:
@@ -52,14 +52,17 @@ async def run_cycle(
             state.paused_since = now()
             state.reminder_sent = False
             notifier.send_alert(
-                f"Cloudflare challenge is blocking '{search_name}'. Solve it manually:\n{tunnel_instructions}"
+                admin_chat_id,
+                f"Cloudflare challenge is blocking '{url}'. Solve it manually:\n{tunnel_instructions}",
             )
         elif not state.reminder_sent and state.paused_since is not None:
             elapsed = (now() - state.paused_since).total_seconds()
             if elapsed > CHALLENGE_REMINDER_AFTER_SECONDS:
                 state.reminder_sent = True
-                notifier.send_alert(f"Still waiting on a manual challenge solve for '{search_name}'.")
-        logger.info("search '%s': challenge detected, paused", search_name)
+                notifier.send_alert(
+                    admin_chat_id, f"Still waiting on a manual challenge solve for '{url}'."
+                )
+        logger.info("url '%s': challenge detected, paused", url)
         return
 
     if state.paused:
@@ -69,59 +72,74 @@ async def run_cycle(
 
     listings = parse_listings(html)
     all_ids = [l.listing_id for l in listings]
-    new_ids = seen_store.get_new_ids(search_name, all_ids)
-    new_listings = [l for l in listings if l.listing_id in new_ids]
-    if new_listings:
-        # If this raises, the exception propagates to run_one_round WITHOUT
-        # anything being marked seen, so the same ids are retried next cycle.
-        notifier.send_new_listings(search_name, new_listings)
-    seen_store.mark_seen(search_name, all_ids)
 
-    if new_listings:
-        logger.info("search '%s': %d new listing(s)", search_name, len(new_listings))
-    else:
-        logger.info("search '%s': no new listings", search_name)
+    for sub in subscribers:
+        new_ids = seen_store.get_new_ids(sub.search_id, all_ids)
+        new_listings = [l for l in listings if l.listing_id in new_ids]
+        filtered = [
+            l
+            for l in new_listings
+            if passes_filters(l, sub.min_price, sub.max_price, sub.exclude_keywords, sub.condition_filter)
+        ]
+        if filtered:
+            # If this raises, mark_seen below is skipped, so the same ids
+            # are retried for this subscriber next cycle.
+            notifier.send_new_listings(sub.chat_id, sub.name, filtered)
+        seen_store.mark_seen(sub.search_id, all_ids)
+
+    state.last_polled_at = now()
+    logger.info("url '%s': polled, %d subscriber(s)", url, len(subscribers))
 
 
 async def run_one_round(
-    searches: list[tuple[str, str]],
+    subscriptions: list[UserSearch],
     states: dict[str, SearchState],
     fetch_html: FetchHtmlFn,
     seen_store: SeenStore,
     notifier,
     tunnel_instructions: str,
-) -> int:
-    """Poll every search once. Returns how many succeeded.
+    admin_chat_id: int,
+) -> tuple[int, int]:
+    """Poll every distinct URL once, fanning out to its subscribers.
 
-    One search failing must never stop the others from being polled, so each
-    cycle is individually guarded.
+    Returns (succeeded, total) URL counts. One URL failing must never
+    stop the others from being polled.
     """
+    by_url: dict[str, list[UserSearch]] = {}
+    for sub in subscriptions:
+        by_url.setdefault(sub.url, []).append(sub)
+
     succeeded = 0
-    for name, url in searches:
+    for url, subs in by_url.items():
+        states.setdefault(url, SearchState())
         try:
-            await run_cycle(name, url, states[name], fetch_html, seen_store, notifier, tunnel_instructions)
+            await run_cycle_for_url(
+                url, subs, states[url], fetch_html, seen_store, notifier, tunnel_instructions, admin_chat_id
+            )
             succeeded += 1
         except Exception as exc:
-            logger.error("error polling '%s': %s", name, exc)
-    return succeeded
+            logger.error("error polling '%s': %s", url, exc)
+    return succeeded, len(by_url)
 
 
 async def run_forever(
-    searches: list[tuple[str, str]],
+    get_subscriptions: Callable[[], list[UserSearch]],
+    states: dict[str, SearchState],
     fetch_html: FetchHtmlFn,
     seen_store: SeenStore,
     notifier,
     tunnel_instructions: str,
+    admin_chat_id: int,
     poll_interval_seconds: float,
     poll_jitter_fraction: float,
 ) -> None:
-    states = {name: SearchState() for name, _ in searches}
     consecutive_failed_rounds = 0
     while True:
-        succeeded = await run_one_round(
-            searches, states, fetch_html, seen_store, notifier, tunnel_instructions
+        subscriptions = get_subscriptions()
+        succeeded, total = await run_one_round(
+            subscriptions, states, fetch_html, seen_store, notifier, tunnel_instructions, admin_chat_id
         )
-        if succeeded > 0:
+        if total == 0 or succeeded > 0:
             consecutive_failed_rounds = 0
         else:
             consecutive_failed_rounds += 1
@@ -132,8 +150,8 @@ async def run_forever(
                 )
                 logger.error(message)
                 try:
-                    notifier.send_alert(message)
-                except Exception as exc:  # never let the alert mask the restart
+                    notifier.send_alert(admin_chat_id, message)
+                except Exception as exc:
                     logger.error("failed to send browser-dead alert: %s", exc)
                 raise BrowserLikelyDeadError(message)
         jitter = poll_interval_seconds * poll_jitter_fraction
