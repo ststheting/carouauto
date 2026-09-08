@@ -1,4 +1,4 @@
-poll_interval_seconds: 90
+poll_interval_seconds: 300
 poll_jitter_fraction: 0.2
 db_path: carouauto.sqlite3
 user_data_dir: browser-profile

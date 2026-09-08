@@ -13,8 +13,23 @@ MAX_MESSAGE_CHARS = 4000
 RETRY_BACKOFF_SECONDS = 2
 
 
+# A listing whose posted_text doesn't read as freshly-posted is likely
+# resurfaced (e.g. a paid "bump") rather than genuinely new — Carousell
+# doesn't expose a reliable bump flag on the search-results page itself,
+# so this is a heuristic, not a certain detection.
+_STALE_AGE_MARKERS = ("hour", "day", "week", "month", "year")
+
+
+def _looks_stale(posted_text: str) -> bool:
+    lowered = posted_text.lower()
+    return any(marker in lowered for marker in _STALE_AGE_MARKERS)
+
+
 def format_message(listing: Listing) -> str:
-    lines = [listing.title]
+    lines = []
+    if listing.posted_text and _looks_stale(listing.posted_text):
+        lines.append("🔁 Possibly re-surfaced/bumped (not a fresh post)")
+    lines.append(listing.title)
     if listing.price:
         lines.append(listing.price)
     if listing.posted_text:
