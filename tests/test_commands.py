@@ -99,3 +99,157 @@ async def test_handle_help_mentions_the_poll_interval(tmp_path):
     reply = await handle_help([], 111, ctx)
 
     assert "5 minute" in reply.lower()
+
+
+from carouauto.commands import (
+    handle_add,
+    handle_pause,
+    handle_remove,
+    handle_resume,
+    handle_searches,
+    handle_setcondition,
+    handle_setexclude,
+    handle_setprice,
+)
+
+
+@pytest.mark.asyncio
+async def test_handle_add_creates_a_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    assert "speediance" in reply
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert found.url == "https://example.com/s"
+    assert found.min_price is None
+
+
+@pytest.mark.asyncio
+async def test_handle_add_with_price_range(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    await handle_add(["speediance", "https://example.com/s", "100", "500"], 111, ctx)
+
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert (found.min_price, found.max_price) == (100.0, 500.0)
+
+
+@pytest.mark.asyncio
+async def test_handle_add_rejects_non_numeric_price(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_add(["speediance", "https://example.com/s", "not-a-number"], 111, ctx)
+
+    assert "number" in reply.lower()
+    assert ctx.subscriptions.get_search(111, "speediance") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_add_duplicate_name_fails_clearly(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_add(["speediance", "https://example.com/other"], 111, ctx)
+
+    assert "already" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_add_too_few_args_gives_usage(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_add(["speediance"], 111, ctx)
+
+    assert "usage" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_remove_deletes_search_and_its_seen_history(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+    ctx.seen_store.mark_seen(search_id, ["1"])
+
+    reply = await handle_remove(["speediance"], 111, ctx)
+
+    assert "removed" in reply.lower()
+    assert ctx.subscriptions.get_search(111, "speediance") is None
+    assert ctx.seen_store.get_new_ids(search_id, ["1"]) == []  # history gone -> first-run again
+
+
+@pytest.mark.asyncio
+async def test_handle_remove_unknown_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_remove(["does-not-exist"], 111, ctx)
+
+    assert "no search" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_searches_lists_names_and_filters(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s", "100", "500"], 111, ctx)
+
+    reply = await handle_searches([], 111, ctx)
+
+    assert "speediance" in reply
+    assert "100" in reply and "500" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_searches_with_none_tracked(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_searches([], 111, ctx)
+
+    assert "no tracked searches" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_setprice_updates_an_existing_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_setprice(["speediance", "50", "200"], 111, ctx)
+
+    assert "updated" in reply.lower()
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert (found.min_price, found.max_price) == (50.0, 200.0)
+
+
+@pytest.mark.asyncio
+async def test_handle_setexclude_sets_and_clears(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    await handle_setexclude(["speediance", "case,box"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").exclude_keywords == "case,box"
+
+    await handle_setexclude(["speediance", "none"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").exclude_keywords is None
+
+
+@pytest.mark.asyncio
+async def test_handle_setcondition_sets_and_clears(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    await handle_setcondition(["speediance", "Brand", "new"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").condition_filter == "Brand new"
+
+    await handle_setcondition(["speediance", "any"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").condition_filter is None
+
+
+@pytest.mark.asyncio
+async def test_handle_pause_and_resume(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    await handle_pause(["speediance"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").paused is True
+
+    await handle_resume(["speediance"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").paused is False
