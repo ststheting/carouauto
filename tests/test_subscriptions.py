@@ -19,6 +19,18 @@ def test_seed_admin_is_idempotent(tmp_path):
     assert store.is_admin(111) is True
 
 
+def test_seed_admin_recovers_a_revoked_admin(tmp_path):
+    store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
+    store.register(111)
+    store.revoke(111)
+    assert store.is_active(111) is False
+
+    store.seed_admin(111)
+
+    assert store.is_admin(111) is True
+    assert store.is_active(111) is True
+
+
 def test_register_new_user_succeeds_once(tmp_path):
     store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
 

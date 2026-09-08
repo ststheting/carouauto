@@ -74,7 +74,7 @@ class SubscriptionStore:
             """
             INSERT INTO users (chat_id, registered_at, is_admin, revoked)
             VALUES (?, ?, 1, 0)
-            ON CONFLICT(chat_id) DO UPDATE SET is_admin = 1
+            ON CONFLICT(chat_id) DO UPDATE SET is_admin = 1, revoked = 0
             """,
             (chat_id, now),
         )

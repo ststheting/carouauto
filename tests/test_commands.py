@@ -406,6 +406,17 @@ async def test_handle_revoke_non_numeric(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_handle_revoke_rejects_self_revocation(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.seed_admin(111)
+
+    reply = await handle_revoke(["111"], 111, ctx)
+
+    assert "can't revoke your own" in reply.lower()
+    assert ctx.subscriptions.is_admin(111) is True
+
+
+@pytest.mark.asyncio
 async def test_handle_backup_sends_a_document(tmp_path):
     ctx = make_ctx(tmp_path)
     sent = []

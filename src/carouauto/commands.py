@@ -244,6 +244,8 @@ async def handle_revoke(args: list[str], chat_id: int, ctx: BotContext) -> str:
         target = int(args[0])
     except ValueError:
         return "chat_id must be a number."
+    if target == chat_id:
+        return "You can't revoke your own admin access."
     if not ctx.subscriptions.revoke(target):
         return f"No user with chat_id {target}."
     return f"Revoked access for {target}."
@@ -302,5 +304,5 @@ async def dispatch(command: str, args: list[str], chat_id: int, ctx: BotContext)
                 return "This command is admin-only."
         return await handler(args, chat_id, ctx)
     except Exception as exc:
-        logger.error("error handling /%s: %s", command, exc)
+        logger.error("error handling /%s: %s", command, type(exc).__name__)
         return "Something went wrong handling that command."
