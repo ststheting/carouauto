@@ -33,7 +33,14 @@ class Poller:
         try:
             await Stealth().apply_stealth_async(page)
             await page.goto(url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(random.uniform(1000, 3000))
+            try:
+                await page.wait_for_selector(
+                    '[data-testid^="listing-card-"]', state="attached", timeout=15000
+                )
+            except Exception:
+                pass  # genuinely empty results or a challenge page — let the caller's
+                # parser/challenge-detector interpret whatever HTML actually came back
+            await page.wait_for_timeout(random.uniform(500, 1500))
             return await page.content()
         finally:
             await page.close()
