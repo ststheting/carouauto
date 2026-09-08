@@ -218,28 +218,47 @@ async def test_reminder_sent_once_after_30_minutes_still_paused(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_notify_failure_for_one_subscriber_does_not_lose_their_new_listing(tmp_path):
+async def test_notify_failure_for_one_subscriber_does_not_block_the_other_subscriber(tmp_path):
     seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
     state = SearchState()
-    sub = make_sub(1, 111)
+    broken_sub = make_sub(1, 111)
+    healthy_sub = make_sub(2, 222)
 
     async def fetch_seed(url):
         return NORMAL_HTML
 
-    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, FakeNotifier(), "tunnel-info", ADMIN_CHAT_ID)
+    seed_notifier = FakeNotifier()
+    await run_cycle_for_url(
+        "https://example.com", [broken_sub, healthy_sub], state, fetch_seed, seen_store, seed_notifier,
+        "tunnel-info", ADMIN_CHAT_ID,
+    )
 
     async def fetch_updated(url):
         return NORMAL_HTML_WITH_NEW_LISTING
 
+    # broken_sub's notify raises; healthy_sub is processed later in the same
+    # loop and must still get its own notification and have last_polled_at set,
+    # neither of which should depend on broken_sub's outcome.
     failing = FakeNotifier(fail_for_chat_id=111)
-    with pytest.raises(RuntimeError):
-        await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, failing, "tunnel-info", ADMIN_CHAT_ID)
+    await run_cycle_for_url(
+        "https://example.com", [broken_sub, healthy_sub], state, fetch_updated, seen_store, failing,
+        "tunnel-info", ADMIN_CHAT_ID,
+    )
 
-    working = FakeNotifier()
-    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, working, "tunnel-info", ADMIN_CHAT_ID)
+    # broken_sub's own notify was attempted (and raised) ...
+    assert [c[0] for c in failing.new_listings_calls] == [111, 222]
+    # ... but healthy_sub still got its own new listing.
+    chat_id, search_name, new_listings = failing.new_listings_calls[1]
+    assert chat_id == 222
+    assert [l.listing_id for l in new_listings] == ["2"]
 
-    assert len(working.new_listings_calls) == 1
-    assert [l.listing_id for l in working.new_listings_calls[0][2]] == ["2"]
+    # Finding 2: last_polled_at reflects the poll itself, not notification outcomes.
+    assert state.last_polled_at is not None
+
+    # broken_sub's mark_seen was skipped (send raised before it), so its new
+    # listing is retried next round; healthy_sub's was marked seen normally.
+    assert seen_store.get_new_ids(1, ["1", "2"]) == ["2"]
+    assert seen_store.get_new_ids(2, ["1", "2"]) == []
 
 
 @pytest.mark.asyncio

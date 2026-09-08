@@ -73,6 +73,8 @@ async def run_cycle_for_url(
     listings = parse_listings(html)
     all_ids = [l.listing_id for l in listings]
 
+    state.last_polled_at = now()
+
     for sub in subscribers:
         new_ids = seen_store.get_new_ids(sub.search_id, all_ids)
         new_listings = [l for l in listings if l.listing_id in new_ids]
@@ -81,13 +83,18 @@ async def run_cycle_for_url(
             for l in new_listings
             if passes_filters(l, sub.min_price, sub.max_price, sub.exclude_keywords, sub.condition_filter)
         ]
-        if filtered:
-            # If this raises, mark_seen below is skipped, so the same ids
-            # are retried for this subscriber next cycle.
-            notifier.send_new_listings(sub.chat_id, sub.name, filtered)
-        seen_store.mark_seen(sub.search_id, all_ids)
+        try:
+            if filtered:
+                # If this raises, mark_seen below is skipped, so the same ids
+                # are retried for this subscriber next cycle.
+                notifier.send_new_listings(sub.chat_id, sub.name, filtered)
+            seen_store.mark_seen(sub.search_id, all_ids)
+        except Exception as exc:
+            # A single subscriber's notify failure (e.g. a blocked/deactivated
+            # Telegram user) must not stop every other subscriber of this URL
+            # from being processed.
+            logger.error("notify failed for search_id=%s: %s", sub.search_id, exc)
 
-    state.last_polled_at = now()
     logger.info("url '%s': polled, %d subscriber(s)", url, len(subscribers))
 
 
