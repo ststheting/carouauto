@@ -1,4 +1,8 @@
+from pathlib import Path
+
 from carouauto.challenge import is_challenge_page
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_detects_cloudflare_interstitial_title():
@@ -12,7 +16,7 @@ def test_detects_turnstile_widget():
 
 
 def test_normal_search_results_page_is_not_a_challenge():
-    html = '<html><body><div data-testid="listing-card-1">Item</div></body></html>'
+    html = (FIXTURES / "search_results_normal.html").read_text()
     assert is_challenge_page(html) is False
 
 
