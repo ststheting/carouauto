@@ -369,3 +369,127 @@ async def test_handle_list_unknown_search(tmp_path):
     reply = await handle_list(["does-not-exist"], 111, ctx)
 
     assert "no search" in reply.lower()
+
+
+from carouauto.commands import dispatch, handle_backup, handle_revoke
+
+
+@pytest.mark.asyncio
+async def test_handle_revoke_by_chat_id(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(222)
+
+    reply = await handle_revoke(["222"], 111, ctx)
+
+    assert "revoked" in reply.lower()
+    assert ctx.subscriptions.is_active(222) is False
+
+
+@pytest.mark.asyncio
+async def test_handle_revoke_unknown_chat_id(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_revoke(["999"], 111, ctx)
+
+    assert "no user" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_revoke_non_numeric(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_revoke(["not-a-number"], 111, ctx)
+
+    assert "number" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_sends_a_document(tmp_path):
+    ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_document(self, chat_id, file_path, filename):
+            sent.append((chat_id, filename))
+
+    ctx.notifier = FakeNotifier()
+
+    reply = await handle_backup([], 111, ctx)
+
+    assert sent == [(111, "carouauto_backup.sqlite3")]
+    assert reply != ""
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_unregistered_user(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await dispatch("add", ["speediance", "https://example.com"], 111, ctx)
+
+    assert "register" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_allows_public_commands_without_registration(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await dispatch("help", [], 111, ctx)
+
+    assert "carouauto" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_allows_registered_user_to_add(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    reply = await dispatch("add", ["speediance", "https://example.com"], 111, ctx)
+
+    assert "added" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rejects_non_admin_on_admin_command(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    reply = await dispatch("revoke", ["222"], 111, ctx)
+
+    assert "admin" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_allows_admin_on_admin_command(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.seed_admin(111)
+    ctx.subscriptions.register(222)
+
+    reply = await dispatch("revoke", ["222"], 111, ctx)
+
+    assert "revoked" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unknown_command(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await dispatch("not-a-real-command", [], 111, ctx)
+
+    assert "unknown command" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_never_raises_even_if_a_handler_blows_up(tmp_path, monkeypatch):
+    import carouauto.commands as commands_module
+
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    async def broken_handler(args, chat_id, ctx):
+        raise RuntimeError("boom")
+
+    monkeypatch.setitem(commands_module._HANDLERS, "add", broken_handler)
+
+    reply = await dispatch("add", [], 111, ctx)
+
+    assert "something went wrong" in reply.lower()

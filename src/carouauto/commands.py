@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import logging
+import os
 import shlex
+import sqlite3
+import tempfile
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -12,6 +16,8 @@ from .scheduler import SearchState
 from .subscriptions import SubscriptionStore
 
 FetchHtmlFn = Callable[[str], Awaitable[str]]
+
+logger = logging.getLogger("carouauto")
 
 
 @dataclass
@@ -229,3 +235,68 @@ async def handle_list(args: list[str], chat_id: int, ctx: BotContext) -> str:
         lines.append(format_message(listing))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+async def handle_revoke(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) != 1:
+        return "Usage: /revoke <chat_id>"
+    try:
+        target = int(args[0])
+    except ValueError:
+        return "chat_id must be a number."
+    if not ctx.subscriptions.revoke(target):
+        return f"No user with chat_id {target}."
+    return f"Revoked access for {target}."
+
+
+async def handle_backup(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    fd, tmp_path = tempfile.mkstemp(suffix=".sqlite3")
+    os.close(fd)
+    try:
+        source = sqlite3.connect(ctx.db_path)
+        dest = sqlite3.connect(tmp_path)
+        source.backup(dest)
+        dest.close()
+        source.close()
+        ctx.notifier.send_document(chat_id, tmp_path, "carouauto_backup.sqlite3")
+    finally:
+        os.remove(tmp_path)
+    return "📦 Backup sent above."
+
+
+_PUBLIC_COMMANDS = {"start", "register", "help"}
+_ADMIN_COMMANDS = {"revoke", "backup"}
+
+_HANDLERS = {
+    "start": handle_start,
+    "register": handle_register,
+    "help": handle_help,
+    "add": handle_add,
+    "remove": handle_remove,
+    "searches": handle_searches,
+    "setprice": handle_setprice,
+    "setexclude": handle_setexclude,
+    "setcondition": handle_setcondition,
+    "pause": handle_pause,
+    "resume": handle_resume,
+    "status": handle_status,
+    "list": handle_list,
+    "revoke": handle_revoke,
+    "backup": handle_backup,
+}
+
+
+async def dispatch(command: str, args: list[str], chat_id: int, ctx: BotContext) -> str:
+    handler = _HANDLERS.get(command)
+    if handler is None:
+        return "Unknown command. Send /help for a list of commands."
+    if command not in _PUBLIC_COMMANDS:
+        if not ctx.subscriptions.is_active(chat_id):
+            return "You need to /register first."
+        if command in _ADMIN_COMMANDS and not ctx.subscriptions.is_admin(chat_id):
+            return "This command is admin-only."
+    try:
+        return await handler(args, chat_id, ctx)
+    except Exception as exc:
+        logger.error("error handling /%s: %s", command, exc)
+        return "Something went wrong handling that command."
