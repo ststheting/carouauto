@@ -4,8 +4,10 @@ import shlex
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
+from .challenge import is_challenge_page
 from .db import SeenStore
-from .notifier import TelegramNotifier
+from .notifier import TelegramNotifier, format_message
+from .parser import parse_listings
 from .scheduler import SearchState
 from .subscriptions import SubscriptionStore
 
@@ -184,3 +186,46 @@ async def handle_resume(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if not ctx.subscriptions.set_paused(chat_id, args[0], False):
         return f"No search named '{args[0]}'."
     return f"Resumed '{args[0]}'."
+
+
+LIST_CAP = 15
+
+
+async def handle_status(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    subs = ctx.subscriptions.list_searches(chat_id)
+    if not subs:
+        return "You have no tracked searches. Use /add <name> <url> to start one."
+    minutes = round(ctx.poll_interval_seconds / 60)
+    lines = [f"Poll interval: ~{minutes} minutes", ""]
+    for sub in subs:
+        state = ctx.states.get(sub.url)
+        if sub.paused:
+            status_text = "paused (by you)"
+        elif state and state.paused:
+            status_text = "paused (Cloudflare challenge, awaiting manual solve)"
+        elif state and state.last_polled_at:
+            status_text = f"last checked {state.last_polled_at.strftime('%H:%M UTC')}"
+        else:
+            status_text = "not yet checked"
+        lines.append(f"{sub.name}: {status_text}")
+    return "\n".join(lines)
+
+
+async def handle_list(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) != 1:
+        return "Usage: /list <name>"
+    name = args[0]
+    sub = ctx.subscriptions.get_search(chat_id, name)
+    if sub is None:
+        return f"No search named '{name}'. Use /searches to see your tracked searches."
+    html = await ctx.fetch_html(sub.url)
+    if is_challenge_page(html):
+        return "Carousell is showing a Cloudflare challenge right now — try again shortly."
+    listings = parse_listings(html)
+    if not listings:
+        return f"No listings currently found for '{name}'."
+    lines = [f"Current listings for '{name}' (showing up to {LIST_CAP}):", ""]
+    for listing in listings[:LIST_CAP]:
+        lines.append(format_message(listing))
+        lines.append("")
+    return "\n".join(lines).strip()

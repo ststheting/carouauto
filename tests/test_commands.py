@@ -253,3 +253,119 @@ async def test_handle_pause_and_resume(tmp_path):
 
     await handle_resume(["speediance"], 111, ctx)
     assert ctx.subscriptions.get_search(111, "speediance").paused is False
+
+
+from datetime import datetime, timezone
+
+from carouauto.commands import handle_list, handle_status
+from carouauto.scheduler import SearchState
+
+NORMAL_HTML = """
+<div data-testid="listing-card-1">
+  <a href="/u/seller1/"><p data-testid="listing-card-text-seller-name">seller1</p><div><p>2 minutes ago</p></div></a>
+  <a href="/p/item-one-1/"><img alt="Item One" src="https://example.com/1.jpg"/><p>Item One</p><div><p title="S$10">S$10</p></div><p>Brand new</p></a>
+</div>
+"""
+
+CHALLENGE_HTML = "<html><head><title>Just a moment...</title></head></html>"
+
+
+@pytest.mark.asyncio
+async def test_handle_status_with_no_searches(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_status([], 111, ctx)
+
+    assert "no tracked searches" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_status_reports_paused_by_user(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+    await handle_pause(["speediance"], 111, ctx)
+
+    reply = await handle_status([], 111, ctx)
+
+    assert "speediance" in reply
+    assert "paused" in reply.lower()
+    assert "you" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_status_reports_cloudflare_pause(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+    ctx.states["https://example.com/s"] = SearchState(paused=True)
+
+    reply = await handle_status([], 111, ctx)
+
+    assert "challenge" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_status_reports_last_polled_time(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+    ctx.states["https://example.com/s"] = SearchState(
+        last_polled_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    )
+
+    reply = await handle_status([], 111, ctx)
+
+    assert "12:00" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_list_shows_current_listings_unfiltered(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s", "1000", "2000"], 111, ctx)  # price filter that would exclude Item One
+
+    async def fetch_html(url):
+        return NORMAL_HTML
+
+    ctx.fetch_html = fetch_html
+
+    reply = await handle_list(["speediance"], 111, ctx)
+
+    assert "Item One" in reply  # shown despite the S$10 price failing the S$1000-2000 filter
+
+
+@pytest.mark.asyncio
+async def test_handle_list_does_not_touch_seen_state(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+
+    async def fetch_html(url):
+        return NORMAL_HTML
+
+    ctx.fetch_html = fetch_html
+    await handle_list(["speediance"], 111, ctx)
+
+    # If /list had marked "1" seen, this would return [] instead.
+    assert ctx.seen_store.get_new_ids(search_id, ["1"]) == []  # still first-run: untouched
+
+
+@pytest.mark.asyncio
+async def test_handle_list_reports_challenge_page(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_add(["speediance", "https://example.com/s"], 111, ctx)
+
+    async def fetch_html(url):
+        return CHALLENGE_HTML
+
+    ctx.fetch_html = fetch_html
+
+    reply = await handle_list(["speediance"], 111, ctx)
+
+    assert "challenge" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_list_unknown_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_list(["does-not-exist"], 111, ctx)
+
+    assert "no search" in reply.lower()

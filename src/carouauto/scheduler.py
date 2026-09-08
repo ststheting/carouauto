@@ -31,6 +31,7 @@ class SearchState:
     paused: bool = False
     paused_since: datetime | None = None
     reminder_sent: bool = False
+    last_polled_at: datetime | None = None
 
 
 async def run_cycle(
