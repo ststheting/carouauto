@@ -16,8 +16,19 @@ TUNNEL_INSTRUCTIONS = (
 )
 
 
-async def main() -> None:
+def configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # httpx logs every request's full URL at INFO by default, which would
+    # embed the Telegram bot token (it's part of the URL path) straight into
+    # the journal. Our own request-level error handling already redacts it
+    # (see notifier.py); this closes the same leak at the library's own
+    # logging layer.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+async def main() -> None:
+    configure_logging()
     config = load_config()
     seen_store = SeenStore(config.db_path)
     notifier = TelegramNotifier(config.telegram_bot_token, config.telegram_chat_id)
