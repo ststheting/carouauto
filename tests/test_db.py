@@ -37,3 +37,39 @@ def test_state_persists_across_store_instances(tmp_path):
     new_ids = store_two.diff_and_update("speediance", ["111", "222"])
 
     assert new_ids == ["222"]
+
+
+def test_get_new_ids_returns_nothing_on_first_run(tmp_path):
+    store = SeenStore(str(tmp_path / "test.sqlite3"))
+
+    assert store.get_new_ids("speediance", ["111", "222"]) == []
+
+
+def test_get_new_ids_does_not_mutate_state(tmp_path):
+    store = SeenStore(str(tmp_path / "test.sqlite3"))
+    store.mark_seen("speediance", ["111"])
+
+    first = store.get_new_ids("speediance", ["111", "222", "333"])
+    second = store.get_new_ids("speediance", ["111", "222", "333"])
+
+    assert first == ["222", "333"]
+    assert second == first  # reading is repeatable; nothing was recorded
+
+
+def test_mark_seen_persists_so_ids_are_no_longer_new(tmp_path):
+    store = SeenStore(str(tmp_path / "test.sqlite3"))
+    store.mark_seen("speediance", ["111"])
+    assert store.get_new_ids("speediance", ["111", "222"]) == ["222"]
+
+    store.mark_seen("speediance", ["111", "222"])
+
+    assert store.get_new_ids("speediance", ["111", "222"]) == []
+
+
+def test_mark_seen_ends_the_first_run_for_a_search(tmp_path):
+    store = SeenStore(str(tmp_path / "test.sqlite3"))
+
+    store.mark_seen("speediance", ["111"])
+
+    # A different search is still on its own first run.
+    assert store.get_new_ids("nintendo-switch", ["111"]) == []

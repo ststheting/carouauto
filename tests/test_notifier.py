@@ -1,5 +1,40 @@
+import httpx
+import pytest
+
 from carouauto.models import Listing
-from carouauto.notifier import format_message
+from carouauto.notifier import MAX_MESSAGE_CHARS, TelegramNotifier, format_message
+
+BOT_TOKEN = "123456:SUPER-SECRET-BOT-TOKEN"
+
+
+class FakeClient:
+    """Stands in for httpx.Client, recording posts and optionally failing."""
+
+    def __init__(self, fail_times=0):
+        self.posts = []
+        self._fail_times = fail_times
+
+    def post(self, url, data):
+        self.posts.append((url, data))
+        if len(self.posts) <= self._fail_times:
+            raise httpx.ConnectError(f"connection failed for {url}")
+        return httpx.Response(200, request=httpx.Request("POST", url))
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch):
+    monkeypatch.setattr("carouauto.notifier.time.sleep", lambda _: None)
+
+
+def make_listing(i, title_len=0):
+    return Listing(
+        listing_id=str(i),
+        title=f"Item {i}" + "x" * title_len,
+        price="S$10",
+        url=f"https://www.carousell.sg/p/item-{i}/",
+        thumbnail_url="",
+        posted_text="1 hour ago",
+    )
 
 
 def test_format_message_includes_title_price_time_and_url():
@@ -33,3 +68,56 @@ def test_format_message_omits_blank_price_and_posted_text():
     message = format_message(listing)
 
     assert message == "Item\nhttps://www.carousell.sg/p/item-1/"
+
+
+def test_send_retries_once_then_succeeds():
+    client = FakeClient(fail_times=1)
+    notifier = TelegramNotifier(BOT_TOKEN, "999", client=client)
+
+    notifier.send_alert("hello")
+
+    assert len(client.posts) == 2  # one failure plus one successful retry
+
+
+def test_send_raises_after_one_retry_without_leaking_the_token():
+    client = FakeClient(fail_times=99)
+    notifier = TelegramNotifier(BOT_TOKEN, "999", client=client)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        notifier.send_alert("hello")
+
+    assert len(client.posts) == 2  # exactly one retry, not an unbounded loop
+    # I2: neither the message nor any chained exception may carry the token.
+    assert BOT_TOKEN not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_large_batch_is_split_into_messages_under_the_size_limit():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, "999", client=client)
+    listings = [make_listing(i, title_len=200) for i in range(60)]
+
+    notifier.send_new_listings("speediance", listings)
+
+    assert len(client.posts) > 1  # would have been a single oversized message
+    for _, data in client.posts:
+        assert len(data["text"]) <= MAX_MESSAGE_CHARS
+    # Header appears on the first chunk only.
+    assert client.posts[0][1]["text"].startswith("60 new listings for 'speediance':")
+    for _, data in client.posts[1:]:
+        assert "new listings for" not in data["text"]
+    # Every listing is accounted for across the chunks.
+    combined = "".join(data["text"] for _, data in client.posts)
+    for listing in listings:
+        assert listing.url in combined
+
+
+def test_small_batch_still_sends_a_single_message():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, "999", client=client)
+
+    notifier.send_new_listings("speediance", [make_listing(1), make_listing(2)])
+
+    assert len(client.posts) == 1
+    assert client.posts[0][1]["text"].startswith("2 new listings for 'speediance':")
