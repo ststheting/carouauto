@@ -39,7 +39,7 @@ async def run_command_listener(bot_token: str, ctx: BotContext) -> None:
                 await asyncio.sleep(5)
                 continue
             except Exception as exc:
-                logger.error("unexpected error in command listener: %s", exc)
+                logger.error("unexpected error in command listener: %s", type(exc).__name__)
                 await asyncio.sleep(5)
                 continue
 
