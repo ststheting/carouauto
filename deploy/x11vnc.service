@@ -1,0 +1,13 @@
+[Unit]
+Description=VNC server exposing Xvfb display :99
+After=xvfb.service
+Requires=xvfb.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+ExecStart=/usr/bin/x11vnc -display :99 -forever -shared -rfbport 5900 -localhost -nopw
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

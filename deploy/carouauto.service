@@ -1,0 +1,17 @@
+[Unit]
+Description=Carousell listing monitor
+After=network-online.target xvfb.service
+Requires=xvfb.service
+
+[Service]
+Type=simple
+User=carouauto
+WorkingDirectory=/opt/carouauto
+EnvironmentFile=/opt/carouauto/.env
+Environment=DISPLAY=:99
+ExecStart=/opt/carouauto/.venv/bin/python -m carouauto.main
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
