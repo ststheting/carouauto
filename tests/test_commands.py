@@ -371,6 +371,8 @@ async def test_handle_list_unknown_search(tmp_path):
     assert "no search" in reply.lower()
 
 
+import sqlite3
+
 from carouauto.commands import dispatch, handle_backup, handle_revoke
 
 
@@ -493,3 +495,80 @@ async def test_dispatch_never_raises_even_if_a_handler_blows_up(tmp_path, monkey
     reply = await dispatch("add", [], 111, ctx)
 
     assert "something went wrong" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_never_raises_if_is_active_check_blows_up(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    def broken_is_active(chat_id):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ctx.subscriptions, "is_active", broken_is_active)
+
+    reply = await dispatch("add", ["speediance", "https://example.com"], 111, ctx)
+
+    assert isinstance(reply, str)
+    assert "something went wrong" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_never_raises_if_is_admin_check_blows_up(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    def broken_is_admin(chat_id):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ctx.subscriptions, "is_admin", broken_is_admin)
+
+    reply = await dispatch("revoke", ["222"], 111, ctx)
+
+    assert isinstance(reply, str)
+    assert "something went wrong" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_closes_connections_even_if_backup_raises(tmp_path, monkeypatch):
+    # sqlite3.Connection is a C-level immutable type, so its `.backup` method
+    # can't be monkeypatched directly. Instead, wrap every connection
+    # sqlite3.connect() produces in a thin proxy that tracks close() calls
+    # and makes `.backup()` raise, so we can observe real close-on-failure
+    # behavior without excessive mocking.
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    class FakeNotifier:
+        def send_document(self, chat_id, file_path, filename):
+            raise AssertionError("should not be called when backup() raises")
+
+    ctx.notifier = FakeNotifier()
+
+    real_connect = sqlite3.connect
+    opened = []
+
+    class TrackingConnection:
+        def __init__(self, real_conn):
+            self._real_conn = real_conn
+            self.closed = False
+
+        def backup(self, *args, **kwargs):
+            raise sqlite3.OperationalError("backup failed")
+
+        def close(self):
+            self.closed = True
+            self._real_conn.close()
+
+    def tracking_connect(*args, **kwargs):
+        proxy = TrackingConnection(real_connect(*args, **kwargs))
+        opened.append(proxy)
+        return proxy
+
+    monkeypatch.setattr(sqlite3, "connect", tracking_connect)
+
+    with pytest.raises(sqlite3.OperationalError):
+        await handle_backup([], 111, ctx)
+
+    assert len(opened) == 2
+    assert all(conn.closed for conn in opened)

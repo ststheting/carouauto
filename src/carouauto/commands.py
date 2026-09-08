@@ -254,10 +254,14 @@ async def handle_backup(args: list[str], chat_id: int, ctx: BotContext) -> str:
     os.close(fd)
     try:
         source = sqlite3.connect(ctx.db_path)
-        dest = sqlite3.connect(tmp_path)
-        source.backup(dest)
-        dest.close()
-        source.close()
+        try:
+            dest = sqlite3.connect(tmp_path)
+            try:
+                source.backup(dest)
+            finally:
+                dest.close()
+        finally:
+            source.close()
         ctx.notifier.send_document(chat_id, tmp_path, "carouauto_backup.sqlite3")
     finally:
         os.remove(tmp_path)
@@ -290,12 +294,12 @@ async def dispatch(command: str, args: list[str], chat_id: int, ctx: BotContext)
     handler = _HANDLERS.get(command)
     if handler is None:
         return "Unknown command. Send /help for a list of commands."
-    if command not in _PUBLIC_COMMANDS:
-        if not ctx.subscriptions.is_active(chat_id):
-            return "You need to /register first."
-        if command in _ADMIN_COMMANDS and not ctx.subscriptions.is_admin(chat_id):
-            return "This command is admin-only."
     try:
+        if command not in _PUBLIC_COMMANDS:
+            if not ctx.subscriptions.is_active(chat_id):
+                return "You need to /register first."
+            if command in _ADMIN_COMMANDS and not ctx.subscriptions.is_admin(chat_id):
+                return "This command is admin-only."
         return await handler(args, chat_id, ctx)
     except Exception as exc:
         logger.error("error handling /%s: %s", command, exc)
