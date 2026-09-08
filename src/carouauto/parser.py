@@ -34,6 +34,13 @@ def parse_listings(html: str) -> list[Listing]:
         price_el = listing_link.select_one('p[title^="S$"]')
         price = price_el["title"] if price_el else ""
 
+        condition = ""
+        if price_el is not None:
+            price_wrapper = price_el.parent
+            condition_el = price_wrapper.find_next_sibling("p") if price_wrapper else None
+            if condition_el is not None:
+                condition = condition_el.get_text(strip=True)
+
         posted_text = ""
         seller_link = card.select_one('a[href^="/u/"]')
         if seller_link is not None:
@@ -48,6 +55,7 @@ def parse_listings(html: str) -> list[Listing]:
                 url=url,
                 thumbnail_url=thumbnail_url,
                 posted_text=posted_text,
+                condition=condition,
             )
         )
 

@@ -27,7 +27,17 @@ def test_extracts_correct_fields_for_a_listing():
         url="https://www.carousell.sg/p/speediance-gym-monster-smart-home-fitness-machine-1460198499/",
         thumbnail_url="https://media.karousell.com/media/photos/products/speediance_thumb.jpg",
         posted_text="18 hours ago",
+        condition="Well used",
     )
+
+
+def test_extracts_condition_for_second_listing():
+    html = (FIXTURES / "search_results_normal.html").read_text()
+
+    listings = parse_listings(html)
+    switch = next(l for l in listings if l.listing_id == "1451610227")
+
+    assert switch.condition == "Brand new"
 
 
 def test_returns_empty_list_for_page_with_no_cards():

@@ -34,6 +34,7 @@ def make_listing(i, title_len=0):
         url=f"https://www.carousell.sg/p/item-{i}/",
         thumbnail_url="",
         posted_text="1 hour ago",
+        condition="Well used",
     )
 
 
@@ -45,6 +46,7 @@ def test_format_message_includes_title_price_time_and_url():
         url="https://www.carousell.sg/p/speediance-gym-monster-1460198499/",
         thumbnail_url="https://media.karousell.com/thumb.jpg",
         posted_text="18 hours ago",
+        condition="Well used",
     )
 
     message = format_message(listing)
@@ -63,6 +65,7 @@ def test_format_message_labels_stale_posted_text_as_possibly_bumped():
         url="https://www.carousell.sg/p/item-1/",
         thumbnail_url="",
         posted_text="4 hours ago",
+        condition="Well used",
     )
 
     message = format_message(listing)
@@ -79,6 +82,7 @@ def test_format_message_does_not_label_fresh_posted_text():
         url="https://www.carousell.sg/p/item-1/",
         thumbnail_url="",
         posted_text="4 minutes ago",
+        condition="Well used",
     )
 
     message = format_message(listing)
@@ -95,6 +99,7 @@ def test_format_message_omits_blank_price_and_posted_text():
         url="https://www.carousell.sg/p/item-1/",
         thumbnail_url="",
         posted_text="",
+        condition="",
     )
 
     message = format_message(listing)

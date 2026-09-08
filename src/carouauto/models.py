@@ -9,3 +9,4 @@ class Listing:
     url: str
     thumbnail_url: str
     posted_text: str
+    condition: str
