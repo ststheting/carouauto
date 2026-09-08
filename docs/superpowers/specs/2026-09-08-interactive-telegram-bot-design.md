@@ -36,6 +36,8 @@ no config file edits, no restart required for day-to-day use.
   systemd's existing `Restart=on-failure` recovers it, consistent with the
   project's existing dead-browser-recovery philosophy — no new bespoke
   recovery mechanism.
+- Users understand the poll interval is ~5 minutes (not near-instant) —
+  surfaced in `/help` and/or `/status`, not left as a silent surprise.
 
 ## Non-goals
 
@@ -127,7 +129,11 @@ in the database. Whoever's chat ID is currently the deployment's
 
 `config.yaml` drops its `searches:` list entirely (superseded by
 `user_searches`) but keeps `poll_interval_seconds`, `poll_jitter_fraction`,
-`db_path`, and `user_data_dir`.
+`db_path`, and `user_data_dir`. `poll_interval_seconds` is currently `300`
+(5 minutes, raised from an earlier 90s during MVP hardening, to reduce
+detection surface and request volume) — it stays a static, non-bot-
+configurable value in this plan; `/help` and `/status` should mention it
+as an expected-latency caveat so users don't assume near-instant delivery.
 
 The `Listing` model gains a `condition: str` field, populated from the
 same page text the parser already walks past today (the "Well used" /
@@ -208,6 +214,28 @@ forward-looking only, per the non-goals above.
 - The actual Telegram `getUpdates` long-polling I/O is verified manually
   against a real bot, consistent with how the Playwright poller and
   Telegram sends are already handled — not mocked.
+
+## Future enhancements (flagged, not built in this plan)
+
+- **Reliable bump detection.** The MVP already labels a notified listing
+  "🔁 Possibly re-surfaced/bumped" whenever its `posted_text` doesn't read
+  as fresh (contains "hour"/"day"/"week"/"month"/"year") — a heuristic,
+  since the search-results page exposes no explicit bump flag. A listing's
+  own detail page is client-rendered from a separate JSON API
+  (`/ds/listing-detail/3.1/listings/<id>/detail/`) that may carry a real
+  bump timestamp — confirmed present in the page's displayed text ("Bumped
+  a minute ago") but not yet confirmed in that API's actual payload
+  (investigation was interrupted by a timeout, then a transient 502,
+  likely from rapid repeated requests to that endpoint). If pursued: this
+  would mean fetching each newly-new listing's own page before notifying
+  it, a real added cost (extra Playwright navigation per listing, more
+  latency before the notification sends, more surface area for a
+  Cloudflare challenge) — worth prototyping against that API in isolation
+  first to confirm it's both reliable and worth the cost before building
+  it into the poll cycle.
+- Per-search poll-interval overrides (each user's own cadence rather than
+  one global value).
+- Bot-configurable global poll interval.
 
 ## Migration / backup
 
