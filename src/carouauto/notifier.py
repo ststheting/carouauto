@@ -80,13 +80,22 @@ class TelegramNotifier:
 
     def send_document(self, chat_id: int, file_path: str, filename: str) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendDocument"
+        failure_name = ""
         with open(file_path, "rb") as f:
             files = {"document": (filename, f)}
             try:
                 response = self._client.post(url, data={"chat_id": chat_id}, files=files)
                 response.raise_for_status()
             except httpx.HTTPError as e:
-                raise RuntimeError(f"Telegram document send failed: {type(e).__name__}") from None
+                # Only the exception's class name escapes. httpx's own message
+                # embeds the request URL, which contains the bot token, so it
+                # must never be interpolated, chained, or re-raised. Raising
+                # outside this except block (after the file is closed) means
+                # no exception is "currently being handled" at raise time, so
+                # __context__ ends up genuinely None, not just suppressed.
+                failure_name = type(e).__name__
+        if failure_name:
+            raise RuntimeError(f"Telegram document send failed: {failure_name}")
 
     def _send_text(self, chat_id: int, text: str) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendMessage"

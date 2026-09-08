@@ -167,3 +167,18 @@ def test_send_document_posts_the_file_with_the_given_chat_id(tmp_path):
     assert url.endswith("/sendDocument")
     assert data["chat_id"] == 777
     assert "document" in files
+
+
+def test_send_document_raises_without_leaking_the_token(tmp_path):
+    client = FakeClient(fail_times=99)
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+    file_path = tmp_path / "backup.sqlite3"
+    file_path.write_bytes(b"fake sqlite bytes")
+
+    with pytest.raises(RuntimeError) as excinfo:
+        notifier.send_document(777, str(file_path), "carouauto_backup.sqlite3")
+
+    assert len(client.posts) == 1
+    assert BOT_TOKEN not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
