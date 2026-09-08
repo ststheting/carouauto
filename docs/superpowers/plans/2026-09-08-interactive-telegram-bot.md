@@ -420,7 +420,6 @@ def _row_to_user_search(row) -> UserSearch:
 class SubscriptionStore:
     def __init__(self, db_path: str):
         self._conn = sqlite3.connect(db_path)
-        self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
 
@@ -1814,6 +1813,7 @@ git commit -m "feat: add search-management command handlers (add/remove/searches
 ## Task 8: `/status` and `/list` command handlers
 
 **Files:**
+- Modify: `src/carouauto/scheduler.py`
 - Modify: `src/carouauto/commands.py`
 - Modify: `tests/test_commands.py`
 
@@ -1821,7 +1821,11 @@ git commit -m "feat: add search-management command handlers (add/remove/searches
 - Consumes: `SearchState` (existing `scheduler.py`, read via
   `ctx.states`), `is_challenge_page` (existing `challenge.py`),
   `parse_listings` (existing `parser.py`), `format_message` (Task 5).
-- Produces: `async def handle_status`, `handle_list` — appended to
+- Produces: `SearchState` gains a `last_polled_at: datetime | None = None`
+  field (a small, isolated addition — Task 11 later replaces this whole
+  file wholesale and re-declares the same field, so there's no conflict,
+  just do this one now since `/status` needs it before Task 11 exists).
+  `async def handle_status`, `handle_list` — appended to
   `src/carouauto/commands.py`. `handle_list` is the only command handler
   that awaits I/O (`ctx.fetch_html`).
 
@@ -1829,7 +1833,24 @@ git commit -m "feat: add search-management command handlers (add/remove/searches
 only gate automatic notifications, never this on-demand snapshot — and it
 never touches `seen_listings` (no call to `get_new_ids`/`mark_seen`).
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Add `last_polled_at` to the existing `SearchState` dataclass**
+
+In `src/carouauto/scheduler.py`, find the existing `SearchState` dataclass
+and add one field:
+
+```python
+@dataclass
+class SearchState:
+    paused: bool = False
+    paused_since: datetime | None = None
+    reminder_sent: bool = False
+    last_polled_at: datetime | None = None
+```
+
+Nothing else in `scheduler.py` needs to change for this task — the field
+is simply unused by the current scheduler code until Task 11.
+
+- [ ] **Step 2: Write the failing tests**
 
 Append to `tests/test_commands.py`:
 
@@ -1950,12 +1971,12 @@ async def test_handle_list_unknown_search(tmp_path):
     assert "no search" in reply.lower()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 3: Run tests to verify they fail**
 
 Run: `pytest tests/test_commands.py -v`
 Expected: FAIL — `ImportError: cannot import name 'handle_status'`
 
-- [ ] **Step 3: Append to `src/carouauto/commands.py`**
+- [ ] **Step 4: Append to `src/carouauto/commands.py`**
 
 Add the needed imports near the top (alongside the existing ones):
 
@@ -2017,15 +2038,15 @@ of the file (it currently only imports `TelegramNotifier`):
 from .notifier import TelegramNotifier, format_message
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 5: Run tests to verify they pass**
 
 Run: `pytest tests/test_commands.py -v`
 Expected: PASS (31 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/carouauto/commands.py tests/test_commands.py
+git add src/carouauto/scheduler.py src/carouauto/commands.py tests/test_commands.py
 git commit -m "feat: add /status and /list command handlers"
 ```
 
