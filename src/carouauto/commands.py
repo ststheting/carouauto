@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 from dataclasses import dataclass
 from typing import Awaitable, Callable
+from urllib.parse import quote
 
 from .challenge import is_challenge_page
 from .db import SeenStore
@@ -59,7 +60,7 @@ async def handle_register(args: list[str], chat_id: int, ctx: BotContext) -> str
     if args[0] != ctx.registration_password:
         return "Incorrect password."
     if ctx.subscriptions.register(chat_id):
-        return "Registered! Try /add <name> <url> to track a search. See /help for all commands."
+        return "Registered! Try /add <name> to track a search. See /help for all commands."
     return "You're already registered."
 
 
@@ -70,7 +71,9 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         f"Checks run roughly every {minutes} minutes — expect new listings "
         "a few minutes after they're posted, not instantly.\n\n"
         "/register <password> — get access\n"
-        "/add <name> <url> [min] [max] — track a search, optional price range\n"
+        "/add <name> [query] [min] [max] — track a search; searches for <name> itself "
+        "if you don't give a separate query\n"
+        "/addurl <name> <url> [min] [max] — track a search using an exact Carousell URL\n"
         "/remove <name> — stop tracking a search\n"
         "/searches — list your tracked searches\n"
         "/setprice <name> <min> <max> — update a search's price filter\n"
@@ -85,9 +88,45 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
     )
 
 
+def _build_carousell_search_url(query: str) -> str:
+    return f"https://www.carousell.sg/search/{quote(query)}?sort_by=3"
+
+
+def _is_url(text: str) -> bool:
+    return text.startswith("http://") or text.startswith("https://")
+
+
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) < 1:
+        return (
+            "Usage: /add <name> [query] [min] [max] — searches Carousell for <name> "
+            "itself if you don't give a separate query. Use /addurl for an exact "
+            "Carousell URL."
+        )
+    name = args[0]
+    query = args[1] if len(args) >= 2 else args[0]
+    min_price = max_price = None
+    if len(args) >= 3:
+        try:
+            min_price = float(args[2])
+        except ValueError:
+            return "min price must be a number."
+    if len(args) >= 4:
+        try:
+            max_price = float(args[3])
+        except ValueError:
+            return "max price must be a number."
+    url = query if _is_url(query) else _build_carousell_search_url(query)
+    search_id = ctx.subscriptions.add_search(chat_id, name, url, min_price, max_price)
+    if search_id is None:
+        return f"You already have a search named '{name}'. Use /remove first or pick a different name."
+    minutes = round(ctx.poll_interval_seconds / 60)
+    return f"Added '{name}'. You'll be notified of new listings within ~{minutes} minutes of the next check."
+
+
+async def handle_addurl(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 2:
-        return "Usage: /add <name> <url> [min] [max]"
+        return "Usage: /addurl <name> <url> [min] [max]"
     name, url = args[0], args[1]
     min_price = max_price = None
     if len(args) >= 3:
@@ -120,7 +159,7 @@ async def handle_remove(args: list[str], chat_id: int, ctx: BotContext) -> str:
 async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str:
     subs = ctx.subscriptions.list_searches(chat_id)
     if not subs:
-        return "You have no tracked searches yet. Use /add <name> <url> to start one."
+        return "You have no tracked searches yet. Use /add <name> to start one."
     lines = []
     for sub in subs:
         parts = [sub.name]
@@ -200,7 +239,7 @@ LIST_CAP = 15
 async def handle_status(args: list[str], chat_id: int, ctx: BotContext) -> str:
     subs = ctx.subscriptions.list_searches(chat_id)
     if not subs:
-        return "You have no tracked searches. Use /add <name> <url> to start one."
+        return "You have no tracked searches. Use /add <name> to start one."
     minutes = round(ctx.poll_interval_seconds / 60)
     lines = [f"Poll interval: ~{minutes} minutes", ""]
     for sub in subs:
@@ -278,6 +317,7 @@ _HANDLERS = {
     "register": handle_register,
     "help": handle_help,
     "add": handle_add,
+    "addurl": handle_addurl,
     "remove": handle_remove,
     "searches": handle_searches,
     "setprice": handle_setprice,

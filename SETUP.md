@@ -48,8 +48,14 @@ Message your bot on Telegram:
 
 ```
 /register <the password from step 1>
-/add speediance https://www.carousell.sg/search/speediance?sort_by=3
+/add speediance
 ```
+
+`/add <name>` searches Carousell for `<name>` itself — for a different
+search term than the name you want to use, say `/add fitnessmachine
+speediance`. If you want to track an exact Carousell URL (e.g. one with
+filters applied via Carousell's own search UI) instead, use `/addurl
+<name> <url>`.
 
 Send `/help` for the full command list, or `/searches` to see what
 you're tracking. Anyone else you give the password to does the same —
