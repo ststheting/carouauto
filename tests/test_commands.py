@@ -44,6 +44,15 @@ def test_parse_command_returns_none_for_empty_text():
     assert parse_command("/") is None
 
 
+def test_parse_command_normalizes_smart_quotes_from_mobile_keyboards():
+    # iOS-style curly quotes, e.g. "aeke s1 pro" auto-converted to “aeke s1 pro”
+    assert parse_command("/add “aeke s1 pro”") == ("add", ["aeke s1 pro"])
+    assert parse_command("/add switch ‘nintendo switch’") == (
+        "add",
+        ["switch", "nintendo switch"],
+    )
+
+
 @pytest.mark.asyncio
 async def test_handle_start_mentions_register(tmp_path):
     ctx = make_ctx(tmp_path)

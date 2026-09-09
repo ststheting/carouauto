@@ -33,10 +33,25 @@ class BotContext:
     poll_interval_seconds: float
 
 
+# Mobile keyboards (notably iOS) auto-convert straight quotes to "smart"
+# curly quotes, which shlex does not recognize as grouping delimiters —
+# without this, `/add "nintendo switch"` typed on a phone silently splits
+# into three words instead of grouping the quoted phrase into one argument.
+_SMART_QUOTE_TRANSLATION = str.maketrans(
+    {
+        "“": '"',  # “
+        "”": '"',  # ”
+        "‘": "'",  # '
+        "’": "'",  # '
+    }
+)
+
+
 def parse_command(text: str) -> tuple[str, list[str]] | None:
     text = text.strip()
     if not text.startswith("/"):
         return None
+    text = text.translate(_SMART_QUOTE_TRANSLATION)
     try:
         parts = shlex.split(text)
     except ValueError:
