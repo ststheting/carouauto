@@ -1,6 +1,4 @@
-import pytest
-
-from carouauto.filters import parse_age_days, parse_price, passes_filters
+from carouauto.filters import parse_price, passes_filters
 from carouauto.models import Listing
 
 
@@ -80,43 +78,3 @@ def test_hide_bumped_keeps_a_confirmed_not_bumped_listing():
 def test_hide_bumped_keeps_an_unchecked_listing():
     listing = make_listing(is_bumped=None)
     assert passes_filters(listing, None, None, None, None, hide_bumped=True) is True
-
-
-def test_parse_age_days_handles_just_now_and_yesterday():
-    assert parse_age_days("Just now") == 0.0
-    assert parse_age_days("just now") == 0.0
-    assert parse_age_days("Yesterday") == 1.0
-
-
-def test_parse_age_days_handles_units():
-    assert parse_age_days("30 minutes ago") == pytest.approx(30 / 1440)
-    assert parse_age_days("2 hours ago") == pytest.approx(2 / 24)
-    assert parse_age_days("3 days ago") == 3
-    assert parse_age_days("2 weeks ago") == 14
-    assert parse_age_days("6 months ago") == 180
-    assert parse_age_days("8 years ago") == 8 * 365
-
-
-def test_parse_age_days_returns_none_for_unparseable_text():
-    assert parse_age_days("") is None
-    assert parse_age_days("over a year ago") is None
-
-
-def test_max_age_off_by_default():
-    listing = make_listing(posted_text="8 years ago")
-    assert passes_filters(listing, None, None, None, None) is True
-
-
-def test_max_age_excludes_a_listing_older_than_the_limit():
-    listing = make_listing(posted_text="8 years ago")
-    assert passes_filters(listing, None, None, None, None, max_age_days=90) is False
-
-
-def test_max_age_keeps_a_listing_within_the_limit():
-    listing = make_listing(posted_text="3 days ago")
-    assert passes_filters(listing, None, None, None, None, max_age_days=90) is True
-
-
-def test_max_age_does_not_exclude_unparseable_posted_text():
-    listing = make_listing(posted_text="")
-    assert passes_filters(listing, None, None, None, None, max_age_days=90) is True

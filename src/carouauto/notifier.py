@@ -16,7 +16,7 @@ RETRY_BACKOFF_SECONDS = 2
 def format_message(listing: Listing) -> str:
     lines = []
     if listing.is_bumped:
-        lines.append("🔁 Bumped (re-surfaced, not a fresh post)")
+        lines.append("🔁 Bumped or stale (not a fresh post)")
     lines.append(listing.title)
     if listing.price:
         lines.append(listing.price)

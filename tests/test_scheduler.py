@@ -34,12 +34,12 @@ ADMIN_CHAT_ID = 1
 
 def make_sub(search_id, chat_id, name="speediance", url="https://example.com",
              min_price=None, max_price=None, exclude_keywords=None, condition_filter=None,
-             hide_bumped=False, max_age_days=None):
+             hide_bumped=False):
     return UserSearch(
         search_id=search_id, chat_id=chat_id, name=name, url=url,
         min_price=min_price, max_price=max_price,
         exclude_keywords=exclude_keywords, condition_filter=condition_filter,
-        paused=False, hide_bumped=hide_bumped, max_age_days=max_age_days,
+        paused=False, hide_bumped=hide_bumped,
     )
 
 
@@ -353,7 +353,8 @@ async def test_all_urls_failing_alerts_admin_once_then_exits(tmp_path):
 
 
 BUMPED_DETAIL_HTML = "<html><body><div><p>Bumped</p><p>moments ago</p></div></body></html>"
-LISTED_DETAIL_HTML = "<html><body><div><p>Listed</p><p>over a year ago</p></div></body></html>"
+LISTED_DETAIL_HTML = "<html><body><div><p>Listed</p><p>5 minutes ago</p></div></body></html>"
+STALE_LISTED_DETAIL_HTML = "<html><body><div><p>Listed</p><p>over a year ago</p></div></body></html>"
 
 
 @pytest.mark.asyncio
@@ -455,11 +456,13 @@ NORMAL_HTML_WITH_OLD_LISTING = NORMAL_HTML + """
 
 
 @pytest.mark.asyncio
-async def test_max_age_filter_excludes_a_listing_older_than_the_limit(tmp_path):
+async def test_hide_bumped_excludes_an_old_never_bumped_listing_too(tmp_path):
+    # hide_bumped is a merged "not a fresh post" filter — an old listing
+    # that was never actually bumped is just as excluded as a resurfaced one.
     seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
     notifier = FakeNotifier()
     state = SearchState()
-    sub = make_sub(1, 111, max_age_days=90)
+    sub = make_sub(1, 111, hide_bumped=True)
 
     async def fetch_seed(url):
         return NORMAL_HTML
@@ -467,7 +470,7 @@ async def test_max_age_filter_excludes_a_listing_older_than_the_limit(tmp_path):
     await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     async def fetch_updated(url):
-        return NORMAL_HTML_WITH_OLD_LISTING if url == "https://example.com" else LISTED_DETAIL_HTML
+        return NORMAL_HTML_WITH_OLD_LISTING if url == "https://example.com" else STALE_LISTED_DETAIL_HTML
 
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
@@ -475,11 +478,11 @@ async def test_max_age_filter_excludes_a_listing_older_than_the_limit(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_max_age_filter_keeps_a_listing_within_the_limit(tmp_path):
+async def test_hide_bumped_off_still_shows_an_old_never_bumped_listing(tmp_path):
     seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
     notifier = FakeNotifier()
     state = SearchState()
-    sub = make_sub(1, 111, max_age_days=90)
+    sub = make_sub(1, 111, hide_bumped=False)
 
     async def fetch_seed(url):
         return NORMAL_HTML
@@ -487,13 +490,14 @@ async def test_max_age_filter_keeps_a_listing_within_the_limit(tmp_path):
     await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     async def fetch_updated(url):
-        return NORMAL_HTML_WITH_NEW_LISTING if url == "https://example.com" else LISTED_DETAIL_HTML
+        return NORMAL_HTML_WITH_OLD_LISTING if url == "https://example.com" else STALE_LISTED_DETAIL_HTML
 
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
     _, _, new_listings = notifier.new_listings_calls[0]
-    assert [l.listing_id for l in new_listings] == ["2"]
+    assert [l.listing_id for l in new_listings] == ["3"]
+    assert new_listings[0].is_bumped is True
 
 
 @pytest.mark.asyncio

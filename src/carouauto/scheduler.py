@@ -107,13 +107,7 @@ async def run_cycle_for_url(
             l
             for l in new_listings
             if passes_filters(
-                l,
-                sub.min_price,
-                sub.max_price,
-                sub.exclude_keywords,
-                sub.condition_filter,
-                sub.hide_bumped,
-                sub.max_age_days,
+                l, sub.min_price, sub.max_price, sub.exclude_keywords, sub.condition_filter, sub.hide_bumped
             )
         ]
         try:

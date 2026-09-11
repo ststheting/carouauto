@@ -26,7 +26,6 @@ BOT_COMMANDS = [
     {"command": "setprice", "description": "Set a price filter: /setprice <name> <min> <max>"},
     {"command": "setexclude", "description": "Exclude keywords: /setexclude <name> <word,...>"},
     {"command": "setcondition", "description": "Filter by condition: /setcondition <name> <condition>"},
-    {"command": "setmaxage", "description": "Filter by listing age: /setmaxage <name> <days>"},
     {"command": "pause", "description": "Pause a search: /pause <name>"},
     {"command": "resume", "description": "Resume a search: /resume <name>"},
     {"command": "hidebumped", "description": "Hide bumped listings: /hidebumped <name>"},

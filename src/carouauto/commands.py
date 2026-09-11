@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 from urllib.parse import quote
 
+from .bump import FRESH_WINDOW_DAYS
 from .challenge import is_challenge_page
 from .db import SeenStore
 from .notifier import TelegramNotifier, format_message
@@ -94,11 +95,10 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         "/setprice <name> <min> <max> — update a search's price filter\n"
         "/setexclude <name> <word1,word2,...> — exclude listings matching these words (or 'none')\n"
         "/setcondition <name> <condition> — only notify for this condition (or 'any')\n"
-        "/setmaxage <name> <days> — only notify for listings originally posted within "
-        "this many days (or 'none')\n"
         "/pause <name> / /resume <name> — stop/resume notifications for a search\n"
-        "/hidebumped <name> / /showbumped <name> — stop/resume notifying you about "
-        "bumped (re-surfaced) listings for a search\n"
+        "/hidebumped <name> / /showbumped <name> — stop/resume notifying you about bumped "
+        f"or otherwise stale (posted over {FRESH_WINDOW_DAYS} day ago) listings for a search "
+        "— on by default for new searches\n"
         "/status — check your searches' last-poll status\n"
         "/list <name> — see what's currently on Carousell for a search right now\n"
         "/revoke <chat_id> — admin only, remove someone's access\n"
@@ -115,6 +115,34 @@ def _is_url(text: str) -> bool:
     return text.startswith("http://") or text.startswith("https://")
 
 
+def _parse_optional_price_args(args: list[str], start_index: int) -> tuple[float | None, float | None] | str:
+    """Returns (min_price, max_price), or an error string if unparseable."""
+    min_price = max_price = None
+    if len(args) > start_index:
+        try:
+            min_price = float(args[start_index])
+        except ValueError:
+            return "min price must be a number."
+    if len(args) > start_index + 1:
+        try:
+            max_price = float(args[start_index + 1])
+        except ValueError:
+            return "max price must be a number."
+    return min_price, max_price
+
+
+def _finish_add(chat_id: int, name: str, url: str, min_price: float | None, max_price: float | None, ctx: BotContext) -> str:
+    search_id = ctx.subscriptions.add_search(chat_id, name, url, min_price, max_price)
+    if search_id is None:
+        return f"You already have a search named '{name}'. Use /remove first or pick a different name."
+    minutes = round(ctx.poll_interval_seconds / 60)
+    return (
+        f"Added '{name}'. You'll be notified of new listings within ~{minutes} minutes of the next check.\n"
+        f"Bumped or stale (posted over {FRESH_WINDOW_DAYS} day ago) listings are hidden by default — "
+        f'use /showbumped "{name}" to see them too.'
+    )
+
+
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 1:
         return (
@@ -124,45 +152,23 @@ async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
         )
     name = args[0]
     query = args[1] if len(args) >= 2 else args[0]
-    min_price = max_price = None
-    if len(args) >= 3:
-        try:
-            min_price = float(args[2])
-        except ValueError:
-            return "min price must be a number."
-    if len(args) >= 4:
-        try:
-            max_price = float(args[3])
-        except ValueError:
-            return "max price must be a number."
+    prices = _parse_optional_price_args(args, 2)
+    if isinstance(prices, str):
+        return prices
+    min_price, max_price = prices
     url = query if _is_url(query) else _build_carousell_search_url(query)
-    search_id = ctx.subscriptions.add_search(chat_id, name, url, min_price, max_price)
-    if search_id is None:
-        return f"You already have a search named '{name}'. Use /remove first or pick a different name."
-    minutes = round(ctx.poll_interval_seconds / 60)
-    return f"Added '{name}'. You'll be notified of new listings within ~{minutes} minutes of the next check."
+    return _finish_add(chat_id, name, url, min_price, max_price, ctx)
 
 
 async def handle_addurl(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 2:
         return "Usage: /addurl <name> <url> [min] [max]"
     name, url = args[0], args[1]
-    min_price = max_price = None
-    if len(args) >= 3:
-        try:
-            min_price = float(args[2])
-        except ValueError:
-            return "min price must be a number."
-    if len(args) >= 4:
-        try:
-            max_price = float(args[3])
-        except ValueError:
-            return "max price must be a number."
-    search_id = ctx.subscriptions.add_search(chat_id, name, url, min_price, max_price)
-    if search_id is None:
-        return f"You already have a search named '{name}'. Use /remove first or pick a different name."
-    minutes = round(ctx.poll_interval_seconds / 60)
-    return f"Added '{name}'. You'll be notified of new listings within ~{minutes} minutes of the next check."
+    prices = _parse_optional_price_args(args, 2)
+    if isinstance(prices, str):
+        return prices
+    min_price, max_price = prices
+    return _finish_add(chat_id, name, url, min_price, max_price, ctx)
 
 
 async def handle_remove(args: list[str], chat_id: int, ctx: BotContext) -> str:
@@ -192,8 +198,6 @@ async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str
             parts.append(f"condition: {sub.condition_filter}")
         if sub.hide_bumped:
             parts.append("hiding bumped listings")
-        if sub.max_age_days is not None:
-            parts.append(f"max age {sub.max_age_days:g} days")
         if sub.paused:
             parts.append("(paused)")
         lines.append(" | ".join(parts))
@@ -237,26 +241,6 @@ async def handle_setcondition(args: list[str], chat_id: int, ctx: BotContext) ->
         f"Set condition filter for '{name}' to '{condition}'."
         if condition
         else f"Cleared condition filter for '{name}'."
-    )
-
-
-async def handle_setmaxage(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 2:
-        return "Usage: /setmaxage <name> <days> (or 'none')"
-    name, value = args
-    if value.lower() == "none":
-        max_age_days = None
-    else:
-        try:
-            max_age_days = float(value)
-        except ValueError:
-            return "days must be a number (or 'none')."
-    if not ctx.subscriptions.set_max_age(chat_id, name, max_age_days):
-        return f"No search named '{name}'."
-    return (
-        f"'{name}' will only notify you about listings originally posted within the last {value} days."
-        if max_age_days is not None
-        else f"Cleared the max-age filter for '{name}'."
     )
 
 
@@ -382,7 +366,6 @@ _HANDLERS = {
     "setprice": handle_setprice,
     "setexclude": handle_setexclude,
     "setcondition": handle_setcondition,
-    "setmaxage": handle_setmaxage,
     "pause": handle_pause,
     "resume": handle_resume,
     "hidebumped": handle_hidebumped,
