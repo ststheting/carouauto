@@ -33,12 +33,13 @@ ADMIN_CHAT_ID = 1
 
 
 def make_sub(search_id, chat_id, name="speediance", url="https://example.com",
-             min_price=None, max_price=None, exclude_keywords=None, condition_filter=None):
+             min_price=None, max_price=None, exclude_keywords=None, condition_filter=None,
+             hide_bumped=False, max_age_days=None):
     return UserSearch(
         search_id=search_id, chat_id=chat_id, name=name, url=url,
         min_price=min_price, max_price=max_price,
         exclude_keywords=exclude_keywords, condition_filter=condition_filter,
-        paused=False,
+        paused=False, hide_bumped=hide_bumped, max_age_days=max_age_days,
     )
 
 
@@ -349,3 +350,171 @@ async def test_all_urls_failing_alerts_admin_once_then_exits(tmp_path):
     chat_id, text = notifier.alerts[0]
     assert chat_id == ADMIN_CHAT_ID
     assert "browser may be dead" in text
+
+
+BUMPED_DETAIL_HTML = "<html><body><div><p>Bumped</p><p>moments ago</p></div></body></html>"
+LISTED_DETAIL_HTML = "<html><body><div><p>Listed</p><p>over a year ago</p></div></body></html>"
+
+
+@pytest.mark.asyncio
+async def test_confirmed_bumped_listing_is_still_notified_by_default(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111)  # hide_bumped=False by default
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        return BUMPED_DETAIL_HTML if url != "https://example.com" else NORMAL_HTML_WITH_NEW_LISTING
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert len(notifier.new_listings_calls) == 1
+    _, _, new_listings = notifier.new_listings_calls[0]
+    assert new_listings[0].is_bumped is True
+
+
+@pytest.mark.asyncio
+async def test_hide_bumped_subscriber_never_sees_a_confirmed_bumped_listing(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111, hide_bumped=True)
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        return BUMPED_DETAIL_HTML if url != "https://example.com" else NORMAL_HTML_WITH_NEW_LISTING
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert notifier.new_listings_calls == []
+
+
+@pytest.mark.asyncio
+async def test_hide_bumped_subscriber_still_gets_a_confirmed_not_bumped_listing(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111, hide_bumped=True)
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        return LISTED_DETAIL_HTML if url != "https://example.com" else NORMAL_HTML_WITH_NEW_LISTING
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert len(notifier.new_listings_calls) == 1
+    _, _, new_listings = notifier.new_listings_calls[0]
+    assert new_listings[0].is_bumped is False
+
+
+@pytest.mark.asyncio
+async def test_bump_check_only_fetches_detail_pages_for_genuinely_new_listings(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111, hide_bumped=True)
+    fetched_urls = []
+
+    async def fetch_seed(url):
+        fetched_urls.append(url)
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+    fetched_urls.clear()
+
+    async def fetch_same_again(url):
+        fetched_urls.append(url)
+        return NORMAL_HTML  # nothing new this cycle
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_same_again, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    # Only the search page itself should have been fetched — no new listing
+    # to check a detail page for.
+    assert fetched_urls == ["https://example.com"]
+
+
+NORMAL_HTML_WITH_OLD_LISTING = NORMAL_HTML + """
+<div data-testid="listing-card-3">
+  <a href="/u/seller3/"><p data-testid="listing-card-text-seller-name">seller3</p><div><p>8 years ago</p></div></a>
+  <a href="/p/item-three-3/"><img alt="Item Three" src="https://example.com/3.jpg"/><p>Item Three</p><div><p title="S$300">S$300</p></div><p>Well used</p></a>
+</div>
+"""
+
+
+@pytest.mark.asyncio
+async def test_max_age_filter_excludes_a_listing_older_than_the_limit(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111, max_age_days=90)
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        return NORMAL_HTML_WITH_OLD_LISTING if url == "https://example.com" else LISTED_DETAIL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert notifier.new_listings_calls == []
+
+
+@pytest.mark.asyncio
+async def test_max_age_filter_keeps_a_listing_within_the_limit(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111, max_age_days=90)
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        return NORMAL_HTML_WITH_NEW_LISTING if url == "https://example.com" else LISTED_DETAIL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert len(notifier.new_listings_calls) == 1
+    _, _, new_listings = notifier.new_listings_calls[0]
+    assert [l.listing_id for l in new_listings] == ["2"]
+
+
+@pytest.mark.asyncio
+async def test_bump_detail_page_fetch_failure_does_not_block_the_cycle(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    state = SearchState()
+    sub = make_sub(1, 111)
+
+    async def fetch_seed(url):
+        return NORMAL_HTML
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_seed, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    async def fetch_updated(url):
+        if url == "https://example.com":
+            return NORMAL_HTML_WITH_NEW_LISTING
+        raise RuntimeError("network blip")
+
+    await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
+
+    assert len(notifier.new_listings_calls) == 1
+    _, _, new_listings = notifier.new_listings_calls[0]
+    assert new_listings[0].is_bumped is None

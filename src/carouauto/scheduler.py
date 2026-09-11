@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
+from .bump import is_bumped_listing
 from .challenge import is_challenge_page
 from .db import SeenStore
 from .filters import passes_filters
@@ -75,13 +76,45 @@ async def run_cycle_for_url(
 
     state.last_polled_at = now()
 
+    new_ids_by_search: dict[int, list[str]] = {
+        sub.search_id: seen_store.get_new_ids(sub.search_id, all_ids) for sub in subscribers
+    }
+    candidate_ids = {lid for ids in new_ids_by_search.values() for lid in ids}
+    bump_status: dict[str, bool] = {}
+    for listing in listings:
+        if listing.listing_id not in candidate_ids:
+            continue
+        try:
+            detail_html = await fetch_html(listing.url)
+        except Exception as exc:
+            # A single listing's detail page failing to load must not stop
+            # the rest of this cycle — leave it unchecked (fail-open, still
+            # shown, no bump badge) rather than lose the whole poll.
+            logger.error("bump check failed for '%s': %s", listing.url, type(exc).__name__)
+            continue
+        is_bumped = is_bumped_listing(detail_html)
+        if is_bumped is not None:
+            bump_status[listing.listing_id] = is_bumped
+    listings = [
+        replace(l, is_bumped=bump_status[l.listing_id]) if l.listing_id in bump_status else l
+        for l in listings
+    ]
+
     for sub in subscribers:
-        new_ids = seen_store.get_new_ids(sub.search_id, all_ids)
+        new_ids = new_ids_by_search[sub.search_id]
         new_listings = [l for l in listings if l.listing_id in new_ids]
         filtered = [
             l
             for l in new_listings
-            if passes_filters(l, sub.min_price, sub.max_price, sub.exclude_keywords, sub.condition_filter)
+            if passes_filters(
+                l,
+                sub.min_price,
+                sub.max_price,
+                sub.exclude_keywords,
+                sub.condition_filter,
+                sub.hide_bumped,
+                sub.max_age_days,
+            )
         ]
         try:
             if filtered:

@@ -113,13 +113,16 @@ async def test_handle_help_mentions_the_poll_interval(tmp_path):
 from carouauto.commands import (
     handle_add,
     handle_addurl,
+    handle_hidebumped,
     handle_pause,
     handle_remove,
     handle_resume,
     handle_searches,
     handle_setcondition,
     handle_setexclude,
+    handle_setmaxage,
     handle_setprice,
+    handle_showbumped,
 )
 
 
@@ -337,6 +340,38 @@ async def test_handle_setcondition_sets_and_clears(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_handle_setmaxage_sets_and_clears(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    await handle_setmaxage(["speediance", "30"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").max_age_days == 30.0
+
+    await handle_setmaxage(["speediance", "none"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").max_age_days is None
+
+
+@pytest.mark.asyncio
+async def test_handle_setmaxage_rejects_non_numeric_value(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_setmaxage(["speediance", "not-a-number"], 111, ctx)
+
+    assert "number" in reply.lower()
+    assert ctx.subscriptions.get_search(111, "speediance").max_age_days is None
+
+
+@pytest.mark.asyncio
+async def test_handle_setmaxage_unknown_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_setmaxage(["nope", "30"], 111, ctx)
+
+    assert "no search named" in reply.lower()
+
+
+@pytest.mark.asyncio
 async def test_handle_pause_and_resume(tmp_path):
     ctx = make_ctx(tmp_path)
     await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
@@ -346,6 +381,38 @@ async def test_handle_pause_and_resume(tmp_path):
 
     await handle_resume(["speediance"], 111, ctx)
     assert ctx.subscriptions.get_search(111, "speediance").paused is False
+
+
+@pytest.mark.asyncio
+async def test_handle_hidebumped_and_showbumped(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_hidebumped(["speediance"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").hide_bumped is True
+    assert "speediance" in reply
+
+    reply = await handle_showbumped(["speediance"], 111, ctx)
+    assert ctx.subscriptions.get_search(111, "speediance").hide_bumped is False
+    assert "speediance" in reply
+
+
+@pytest.mark.asyncio
+async def test_handle_hidebumped_unknown_search(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_hidebumped(["nope"], 111, ctx)
+
+    assert "no search named" in reply.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_showbumped_wrong_arg_count_gives_usage(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    reply = await handle_showbumped([], 111, ctx)
+
+    assert "usage" in reply.lower()
 
 
 from datetime import datetime, timezone

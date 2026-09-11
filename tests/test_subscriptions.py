@@ -77,6 +77,8 @@ def test_add_search_then_get_and_list(tmp_path):
     assert found.exclude_keywords is None
     assert found.condition_filter is None
     assert found.paused is False
+    assert found.hide_bumped is False
+    assert found.max_age_days is None
     assert store.list_searches(222) == [found]
 
 
@@ -120,14 +122,114 @@ def test_set_price_exclude_condition_and_paused(tmp_path):
     assert store.set_exclude_keywords(222, "speediance", "case,box only") is True
     assert store.set_condition_filter(222, "speediance", "Brand new") is True
     assert store.set_paused(222, "speediance", True) is True
+    assert store.set_hide_bumped(222, "speediance", True) is True
+    assert store.set_max_age(222, "speediance", 30.0) is True
 
     found = store.get_search(222, "speediance")
     assert (found.min_price, found.max_price) == (50.0, 200.0)
     assert found.exclude_keywords == "case,box only"
     assert found.condition_filter == "Brand new"
     assert found.paused is True
+    assert found.hide_bumped is True
+    assert found.max_age_days == 30.0
 
     assert store.set_price_filter(222, "does-not-exist", 1.0, 2.0) is False
+    assert store.set_hide_bumped(222, "does-not-exist", True) is False
+    assert store.set_max_age(222, "does-not-exist", 30.0) is False
+
+
+def test_existing_db_missing_both_new_columns_is_migrated_in_place(tmp_path):
+    import sqlite3
+
+    db_path = str(tmp_path / "old.sqlite3")
+    # Simulate a DB created before hide_bumped existed.
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE users (
+            chat_id INTEGER PRIMARY KEY,
+            registered_at TEXT NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE user_searches (
+            search_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id),
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            min_price REAL,
+            max_price REAL,
+            exclude_keywords TEXT,
+            condition_filter TEXT,
+            paused INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(chat_id, name)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO users (chat_id, registered_at, is_admin, revoked) VALUES (1, 'now', 1, 0)"
+    )
+    conn.execute(
+        "INSERT INTO user_searches (chat_id, name, url, created_at) VALUES (1, 'old-search', 'https://example.com', 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SubscriptionStore(db_path)
+
+    found = store.get_search(1, "old-search")
+    assert found is not None
+    assert found.hide_bumped is False  # pre-existing row survives with the new columns defaulted
+    assert found.max_age_days is None
+
+
+def test_existing_db_with_hide_bumped_but_not_max_age_is_migrated_in_place(tmp_path):
+    import sqlite3
+
+    db_path = str(tmp_path / "old.sqlite3")
+    # Simulate a DB from right after hide_bumped shipped, but before max_age_days did.
+    conn = sqlite3.connect(db_path)
+    conn.executescript(
+        """
+        CREATE TABLE users (
+            chat_id INTEGER PRIMARY KEY,
+            registered_at TEXT NOT NULL,
+            is_admin INTEGER NOT NULL DEFAULT 0,
+            revoked INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE user_searches (
+            search_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL REFERENCES users(chat_id),
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            min_price REAL,
+            max_price REAL,
+            exclude_keywords TEXT,
+            condition_filter TEXT,
+            paused INTEGER NOT NULL DEFAULT 0,
+            hide_bumped INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            UNIQUE(chat_id, name)
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO users (chat_id, registered_at, is_admin, revoked) VALUES (1, 'now', 1, 0)"
+    )
+    conn.execute(
+        "INSERT INTO user_searches (chat_id, name, url, hide_bumped, created_at) "
+        "VALUES (1, 'old-search', 'https://example.com', 1, 'now')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SubscriptionStore(db_path)
+
+    found = store.get_search(1, "old-search")
+    assert found is not None
+    assert found.hide_bumped is True  # pre-existing value preserved, not clobbered
+    assert found.max_age_days is None  # newly-added column defaults
 
 
 def test_list_active_subscriptions_excludes_paused_and_revoked(tmp_path):

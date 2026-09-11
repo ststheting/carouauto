@@ -58,19 +58,32 @@ def test_format_message_includes_title_price_time_and_url():
     assert "https://www.carousell.sg/p/speediance-gym-monster-1460198499/" in message
 
 
-def test_format_message_labels_stale_posted_text_as_possibly_bumped():
+def test_format_message_labels_a_confirmed_bumped_listing():
     listing = Listing(
         listing_id="1", title="Item", price="S$10",
         url="https://www.carousell.sg/p/item-1/", thumbnail_url="",
-        posted_text="4 hours ago", condition="Well used",
+        posted_text="4 hours ago", condition="Well used", is_bumped=True,
     )
 
     message = format_message(listing)
 
-    assert message.startswith("🔁 Possibly re-surfaced/bumped")
+    assert message.startswith("🔁 Bumped")
 
 
-def test_format_message_does_not_label_fresh_posted_text():
+def test_format_message_does_not_label_a_confirmed_not_bumped_listing():
+    listing = Listing(
+        listing_id="1", title="Item", price="S$10",
+        url="https://www.carousell.sg/p/item-1/", thumbnail_url="",
+        posted_text="4 hours ago", condition="Well used", is_bumped=False,
+    )
+
+    message = format_message(listing)
+
+    assert "🔁" not in message
+    assert message.startswith("Item")
+
+
+def test_format_message_does_not_label_an_unchecked_listing():
     listing = Listing(
         listing_id="1", title="Item", price="S$10",
         url="https://www.carousell.sg/p/item-1/", thumbnail_url="",

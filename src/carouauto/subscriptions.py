@@ -21,14 +21,24 @@ CREATE TABLE IF NOT EXISTS user_searches (
     exclude_keywords TEXT,
     condition_filter TEXT,
     paused INTEGER NOT NULL DEFAULT 0,
+    hide_bumped INTEGER NOT NULL DEFAULT 0,
+    max_age_days REAL,
     created_at TEXT NOT NULL,
     UNIQUE(chat_id, name)
 );
 """
 
+# Columns added after the table's initial release — see
+# _migrate_missing_columns. Each is nullable or has a DEFAULT, so adding it
+# in place never requires backfilling existing rows.
+_ADDITIVE_COLUMNS = {
+    "hide_bumped": "INTEGER NOT NULL DEFAULT 0",
+    "max_age_days": "REAL",
+}
+
 _SEARCH_COLUMNS = (
     "search_id, chat_id, name, url, min_price, max_price, "
-    "exclude_keywords, condition_filter, paused"
+    "exclude_keywords, condition_filter, paused, hide_bumped, max_age_days"
 )
 
 
@@ -43,6 +53,8 @@ class UserSearch:
     exclude_keywords: str | None
     condition_filter: str | None
     paused: bool
+    hide_bumped: bool
+    max_age_days: float | None
 
 
 def _row_to_user_search(row) -> UserSearch:
@@ -56,6 +68,8 @@ def _row_to_user_search(row) -> UserSearch:
         exclude_keywords=row[6],
         condition_filter=row[7],
         paused=bool(row[8]),
+        hide_bumped=bool(row[9]),
+        max_age_days=row[10],
     )
 
 
@@ -63,7 +77,18 @@ class SubscriptionStore:
     def __init__(self, db_path: str):
         self._conn = sqlite3.connect(db_path)
         self._conn.executescript(_SCHEMA)
+        self._migrate_missing_columns()
         self._conn.commit()
+
+    def _migrate_missing_columns(self) -> None:
+        # CREATE TABLE IF NOT EXISTS doesn't add columns to a table that
+        # already exists from before a field was introduced — add any
+        # missing ones in place so existing users' tracked searches survive
+        # a deploy, instead of wiping the database.
+        existing = {row[1] for row in self._conn.execute("PRAGMA table_info(user_searches)")}
+        for column, ddl in _ADDITIVE_COLUMNS.items():
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE user_searches ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         self._conn.close()
@@ -196,11 +221,28 @@ class SubscriptionStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def set_hide_bumped(self, chat_id: int, name: str, hide_bumped: bool) -> bool:
+        cur = self._conn.execute(
+            "UPDATE user_searches SET hide_bumped = ? WHERE chat_id = ? AND name = ?",
+            (1 if hide_bumped else 0, chat_id, name),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def set_max_age(self, chat_id: int, name: str, max_age_days: float | None) -> bool:
+        cur = self._conn.execute(
+            "UPDATE user_searches SET max_age_days = ? WHERE chat_id = ? AND name = ?",
+            (max_age_days, chat_id, name),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def list_active_subscriptions(self) -> list[UserSearch]:
         rows = self._conn.execute(
             """
             SELECT us.search_id, us.chat_id, us.name, us.url, us.min_price, us.max_price,
-                   us.exclude_keywords, us.condition_filter, us.paused
+                   us.exclude_keywords, us.condition_filter, us.paused, us.hide_bumped,
+                   us.max_age_days
             FROM user_searches us
             JOIN users u ON u.chat_id = us.chat_id
             WHERE us.paused = 0 AND u.revoked = 0

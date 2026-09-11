@@ -94,7 +94,11 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         "/setprice <name> <min> <max> — update a search's price filter\n"
         "/setexclude <name> <word1,word2,...> — exclude listings matching these words (or 'none')\n"
         "/setcondition <name> <condition> — only notify for this condition (or 'any')\n"
+        "/setmaxage <name> <days> — only notify for listings originally posted within "
+        "this many days (or 'none')\n"
         "/pause <name> / /resume <name> — stop/resume notifications for a search\n"
+        "/hidebumped <name> / /showbumped <name> — stop/resume notifying you about "
+        "bumped (re-surfaced) listings for a search\n"
         "/status — check your searches' last-poll status\n"
         "/list <name> — see what's currently on Carousell for a search right now\n"
         "/revoke <chat_id> — admin only, remove someone's access\n"
@@ -186,6 +190,10 @@ async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str
             parts.append(f"excluding: {sub.exclude_keywords}")
         if sub.condition_filter:
             parts.append(f"condition: {sub.condition_filter}")
+        if sub.hide_bumped:
+            parts.append("hiding bumped listings")
+        if sub.max_age_days is not None:
+            parts.append(f"max age {sub.max_age_days:g} days")
         if sub.paused:
             parts.append("(paused)")
         lines.append(" | ".join(parts))
@@ -232,6 +240,26 @@ async def handle_setcondition(args: list[str], chat_id: int, ctx: BotContext) ->
     )
 
 
+async def handle_setmaxage(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) != 2:
+        return "Usage: /setmaxage <name> <days> (or 'none')"
+    name, value = args
+    if value.lower() == "none":
+        max_age_days = None
+    else:
+        try:
+            max_age_days = float(value)
+        except ValueError:
+            return "days must be a number (or 'none')."
+    if not ctx.subscriptions.set_max_age(chat_id, name, max_age_days):
+        return f"No search named '{name}'."
+    return (
+        f"'{name}' will only notify you about listings originally posted within the last {value} days."
+        if max_age_days is not None
+        else f"Cleared the max-age filter for '{name}'."
+    )
+
+
 async def handle_pause(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) != 1:
         return "Usage: /pause <name>"
@@ -246,6 +274,22 @@ async def handle_resume(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if not ctx.subscriptions.set_paused(chat_id, args[0], False):
         return f"No search named '{args[0]}'."
     return f"Resumed '{args[0]}'."
+
+
+async def handle_hidebumped(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) != 1:
+        return "Usage: /hidebumped <name>"
+    if not ctx.subscriptions.set_hide_bumped(chat_id, args[0], True):
+        return f"No search named '{args[0]}'."
+    return f"'{args[0]}' will no longer notify you about bumped (re-surfaced) listings."
+
+
+async def handle_showbumped(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if len(args) != 1:
+        return "Usage: /showbumped <name>"
+    if not ctx.subscriptions.set_hide_bumped(chat_id, args[0], False):
+        return f"No search named '{args[0]}'."
+    return f"'{args[0]}' will notify you about bumped listings again."
 
 
 LIST_CAP = 15
@@ -338,8 +382,11 @@ _HANDLERS = {
     "setprice": handle_setprice,
     "setexclude": handle_setexclude,
     "setcondition": handle_setcondition,
+    "setmaxage": handle_setmaxage,
     "pause": handle_pause,
     "resume": handle_resume,
+    "hidebumped": handle_hidebumped,
+    "showbumped": handle_showbumped,
     "status": handle_status,
     "list": handle_list,
     "revoke": handle_revoke,
