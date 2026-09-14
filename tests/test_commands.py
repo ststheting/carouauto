@@ -441,7 +441,7 @@ async def test_handle_status_reports_cloudflare_pause(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handle_status_reports_last_polled_time(tmp_path):
+async def test_handle_status_reports_last_polled_time_in_singapore_time(tmp_path):
     ctx = make_ctx(tmp_path)
     await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
     ctx.states["https://example.com/s"] = SearchState(
@@ -450,7 +450,7 @@ async def test_handle_status_reports_last_polled_time(tmp_path):
 
     reply = await handle_status([], 111, ctx)
 
-    assert "12:00" in reply
+    assert "20:00 SGT" in reply  # 12:00 UTC == 20:00 UTC+8
 
 
 @pytest.mark.asyncio
