@@ -5,8 +5,10 @@ import pytest
 from carouauto.db import SeenStore
 from carouauto.subscriptions import UserSearch
 from carouauto.scheduler import (
+    BROWSER_MAX_AGE_SECONDS,
     MAX_CONSECUTIVE_ROUND_FAILURES,
     BrowserLikelyDeadError,
+    ScheduledBrowserRecycle,
     SearchState,
     run_cycle_for_url,
     run_forever,
@@ -350,6 +352,65 @@ async def test_all_urls_failing_alerts_admin_once_then_exits(tmp_path):
     chat_id, text = notifier.alerts[0]
     assert chat_id == ADMIN_CHAT_ID
     assert "browser may be dead" in text
+
+
+@pytest.mark.asyncio
+async def test_run_forever_recycles_the_browser_after_max_age(tmp_path):
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    def get_subscriptions():
+        return []
+
+    async def fetch_html(url):
+        raise AssertionError("should never be called")
+
+    with pytest.raises(ScheduledBrowserRecycle):
+        await run_forever(
+            get_subscriptions, {}, fetch_html, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID,
+            poll_interval_seconds=0, poll_jitter_fraction=0,
+            browser_started_at=start,
+            now=lambda: start + timedelta(seconds=BROWSER_MAX_AGE_SECONDS + 1),
+        )
+
+    # Routine maintenance, not an anomaly — must not page the admin the way
+    # an actual dead-browser detection does.
+    assert notifier.alerts == []
+
+
+@pytest.mark.asyncio
+async def test_run_forever_does_not_recycle_before_max_age(tmp_path):
+    import asyncio
+
+    seen_store = SeenStore(str(tmp_path / "t.sqlite3"))
+    notifier = FakeNotifier()
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    calls = {"n": 0}
+
+    def get_subscriptions():
+        calls["n"] += 1
+        return []
+
+    async def fetch_html(url):
+        raise AssertionError("should never be called")
+
+    task = asyncio.ensure_future(
+        run_forever(
+            get_subscriptions, {}, fetch_html, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID,
+            poll_interval_seconds=0, poll_jitter_fraction=0,
+            browser_started_at=start,
+            now=lambda: start + timedelta(seconds=BROWSER_MAX_AGE_SECONDS - 1),
+        )
+    )
+    await asyncio.sleep(0.05)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    assert calls["n"] >= 2
 
 
 BUMPED_DETAIL_HTML = "<html><body><div><p>Bumped</p><p>moments ago</p></div></body></html>"

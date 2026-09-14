@@ -19,11 +19,24 @@ FetchHtmlFn = Callable[[str], Awaitable[str]]
 CHALLENGE_REMINDER_AFTER_SECONDS = 30 * 60
 MAX_CONSECUTIVE_ROUND_FAILURES = 5
 
+# The Playwright driver's own memory grows over many hours of continuous page
+# churn and has been observed to hit its heap limit roughly once a day on
+# this VPS's tight RAM budget. Recycling well before that window is up trades
+# one uncontrolled ~20-30 minute outage (the time to detect and react to an
+# actual crash) for a clean, sub-minute restart on our own schedule.
+BROWSER_MAX_AGE_SECONDS = 4 * 60 * 60
+
 logger = logging.getLogger("carouauto")
 
 
 class BrowserLikelyDeadError(RuntimeError):
     """Raised to exit the process so systemd restarts it with a fresh browser."""
+
+
+class ScheduledBrowserRecycle(RuntimeError):
+    """Raised to proactively exit the process on a timer, before hours of
+    continuous Playwright page churn risk the driver's own memory limit —
+    routine maintenance, not a failure, so this doesn't alert the admin."""
 
 
 @dataclass
@@ -166,7 +179,10 @@ async def run_forever(
     admin_chat_id: int,
     poll_interval_seconds: float,
     poll_jitter_fraction: float,
+    browser_started_at: datetime | None = None,
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> None:
+    browser_started_at = browser_started_at if browser_started_at is not None else now()
     consecutive_failed_rounds = 0
     while True:
         subscriptions = get_subscriptions()
@@ -188,5 +204,14 @@ async def run_forever(
                 except Exception as exc:
                     logger.error("failed to send browser-dead alert: %s", exc)
                 raise BrowserLikelyDeadError(message)
+
+        if (now() - browser_started_at).total_seconds() > BROWSER_MAX_AGE_SECONDS:
+            message = (
+                f"carouauto: recycling the browser after {BROWSER_MAX_AGE_SECONDS // 3600}h "
+                "to avoid long-run memory buildup."
+            )
+            logger.info(message)
+            raise ScheduledBrowserRecycle(message)
+
         jitter = poll_interval_seconds * poll_jitter_fraction
         await asyncio.sleep(poll_interval_seconds + random.uniform(-jitter, jitter))

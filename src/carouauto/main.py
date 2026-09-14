@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 from .commands import BotContext
 from .config import load_config
@@ -49,6 +50,7 @@ async def main() -> None:
     )
 
     await poller.start()
+    browser_started_at = datetime.now(timezone.utc)
     try:
         await asyncio.gather(
             run_forever(
@@ -61,11 +63,19 @@ async def main() -> None:
                 admin_chat_id=admin_chat_id,
                 poll_interval_seconds=config.poll_interval_seconds,
                 poll_jitter_fraction=config.poll_jitter_fraction,
+                browser_started_at=browser_started_at,
             ),
             run_command_listener(config.telegram_bot_token, ctx),
         )
     finally:
-        await poller.stop()
+        try:
+            await poller.stop()
+        except Exception as exc:
+            # If the browser/driver already died (the usual reason we're
+            # exiting in the first place), closing it can itself raise —
+            # that must not replace/mask the real exception this finally
+            # block is unwinding for.
+            logging.getLogger("carouauto").error("error stopping poller during shutdown: %s", type(exc).__name__)
         seen_store.close()
         subscriptions.close()
 
