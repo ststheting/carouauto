@@ -287,3 +287,51 @@ def test_answer_callback_without_text_omits_it():
 
     _, data, _ = client.posts[0]
     assert data == {"callback_query_id": "cbq123"}
+
+
+def test_send_photo_posts_to_sendphoto_with_caption_and_markup():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+    markup = {"inline_keyboard": [[{"text": "Open", "url": "https://example.com"}]]}
+
+    notifier.send_photo(CHAT_ID, "https://example.com/thumb.jpg", "A nice lamp\nS$50", markup)
+
+    url, data, _ = client.posts[0]
+    assert url == f"{TELEGRAM_API_BASE}/bot{BOT_TOKEN}/sendPhoto"
+    assert data["chat_id"] == CHAT_ID
+    assert data["photo"] == "https://example.com/thumb.jpg"
+    assert data["caption"] == "A nice lamp\nS$50"
+    assert json.loads(data["reply_markup"]) == markup
+
+
+def test_send_photo_falls_back_to_text_when_the_photo_send_fails():
+    class PhotoFailsClient:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, url, data=None, files=None):
+            self.posts.append((url, data, files))
+            if "sendPhoto" in url:
+                raise httpx.ConnectError("photo fetch failed")
+            return httpx.Response(200, request=httpx.Request("POST", url))
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=PhotoFailsClient())
+
+    notifier.send_photo(CHAT_ID, "https://example.com/thumb.jpg", "A nice lamp", None)  # must not raise
+
+    assert notifier._client.posts[0][0].endswith("/sendPhoto")
+    assert notifier._client.posts[1][0].endswith("/sendMessage")
+    assert notifier._client.posts[1][1]["text"] == "A nice lamp"
+
+
+def test_send_photo_raises_only_if_both_photo_and_text_fallback_fail():
+    class AlwaysFailsClient:
+        def post(self, url, data=None, files=None):
+            raise httpx.ConnectError(f"failed for {url}")
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=AlwaysFailsClient())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        notifier.send_photo(CHAT_ID, "https://example.com/thumb.jpg", "A nice lamp", None)
+
+    assert BOT_TOKEN not in str(excinfo.value)

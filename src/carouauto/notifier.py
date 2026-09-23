@@ -94,6 +94,21 @@ class TelegramNotifier:
         if failure_name:
             raise RuntimeError(f"Telegram edit failed: {failure_name}")
 
+    def send_photo(
+        self, chat_id: int, photo_url: str, caption: str, reply_markup: dict | None
+    ) -> None:
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendPhoto"
+        data = {"chat_id": chat_id, "photo": photo_url, "caption": caption}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
+        try:
+            response = self._client.post(url, data=data)
+            response.raise_for_status()
+            return
+        except httpx.HTTPError:
+            pass  # fall back to a text card below — a bad/unfetchable thumbnail shouldn't lose the notification
+        self.send_text(chat_id, caption, reply_markup)
+
     def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/answerCallbackQuery"
         data = {"callback_query_id": callback_query_id}
