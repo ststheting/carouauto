@@ -118,6 +118,27 @@ async def dispatch_callback(data: str, chat_id: int, ctx: BotContext) -> Callbac
                 force_reply_prompt=f"Reply with words to exclude for '{sub.name}', comma-separated, or `none`.",
             )
 
+        if verb == "rm":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            return CallbackResult(
+                text=f"Remove '{sub.name}'? Are you sure?",
+                reply_markup=ui.remove_confirm_keyboard(sub.search_id),
+            )
+
+        if verb == "rmy":
+            search_id = int(parts[1])
+            sub = ctx.subscriptions.get_search_by_id(chat_id, search_id)
+            if sub is None:
+                return _stale_search_result()
+            ctx.subscriptions.remove_search(chat_id, sub.name)
+            ctx.seen_store.delete_all_for_search(search_id)
+            return CallbackResult(text=f"Removed '{sub.name}'.", reply_markup=None)
+
+        if verb == "rmn":
+            return _panel_result(chat_id, int(parts[1]), ctx)
+
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")
     except Exception as exc:
         logger.error("error handling callback '%s': %s", data, type(exc).__name__)

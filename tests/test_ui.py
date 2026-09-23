@@ -77,3 +77,12 @@ def test_condition_keyboard_has_one_button_per_condition_plus_any():
     assert flat[-2]["text"] == "Any"
     assert flat[-2]["callback_data"] == "cds:3:5"
     assert flat[-1]["callback_data"] == "sp:3"  # back to panel
+
+
+def test_remove_confirm_keyboard_has_yes_and_no():
+    markup = ui.remove_confirm_keyboard(9)
+
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    by_data = {b["callback_data"]: b["text"] for b in flat}
+    assert by_data["rmy:9"] == "Yes, remove it"
+    assert by_data["rmn:9"] == "Cancel"

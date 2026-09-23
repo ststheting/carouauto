@@ -189,3 +189,41 @@ async def test_pp_on_a_stale_search_does_not_set_pending_state(tmp_path):
 
     assert "no longer exists" in result.text.lower()
     assert 111 not in ctx.pending
+
+
+@pytest.mark.asyncio
+async def test_rm_asks_for_confirmation_without_deleting(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"rm:{search_id}", 111, ctx)
+
+    assert "sure" in result.text.lower()
+    assert ctx.subscriptions.get_search_by_id(111, search_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_rmy_deletes_the_search_and_its_seen_history(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.seen_store.mark_seen(search_id, ["1", "2"])
+
+    result = await dispatch_callback(f"rmy:{search_id}", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id) is None
+    assert ctx.seen_store.get_new_ids(search_id, ["1", "2"]) == []  # first-run semantics restored
+    assert "removed" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_rmn_cancels_back_to_the_panel(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"rmn:{search_id}", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id) is not None
+    assert "speediance" in result.text

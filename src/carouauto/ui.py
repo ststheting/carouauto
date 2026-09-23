@@ -59,3 +59,11 @@ def condition_keyboard(sub: UserSearch) -> dict:
     rows.append([("Any", f"cds:{sub.search_id}:5")])
     rows.append([("⬅️ Back", f"sp:{sub.search_id}")])
     return inline_keyboard(rows)
+
+
+def remove_confirm_keyboard(search_id: int) -> dict:
+    return inline_keyboard(
+        [
+            [("Yes, remove it", f"rmy:{search_id}"), ("Cancel", f"rmn:{search_id}")],
+        ]
+    )
