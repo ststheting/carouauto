@@ -17,6 +17,7 @@ from .notifier import TelegramNotifier, format_message
 from .parser import parse_listings
 from .scheduler import SearchState
 from .subscriptions import SubscriptionStore
+from . import ui
 
 FetchHtmlFn = Callable[[str], Awaitable[str]]
 
@@ -189,24 +190,10 @@ async def handle_remove(args: list[str], chat_id: int, ctx: BotContext) -> str:
 async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str:
     subs = ctx.subscriptions.list_searches(chat_id)
     if not subs:
-        return "You have no tracked searches yet. Use /add <name> to start one."
-    lines = []
-    for sub in subs:
-        parts = [sub.name]
-        if sub.min_price is not None or sub.max_price is not None:
-            lo = sub.min_price if sub.min_price is not None else "-"
-            hi = sub.max_price if sub.max_price is not None else "-"
-            parts.append(f"price {lo}-{hi}")
-        if sub.exclude_keywords:
-            parts.append(f"excluding: {sub.exclude_keywords}")
-        if sub.condition_filter:
-            parts.append(f"condition: {sub.condition_filter}")
-        if sub.hide_bumped:
-            parts.append("hiding bumped listings")
-        if sub.paused:
-            parts.append("(paused)")
-        lines.append(" | ".join(parts))
-    return "\n".join(lines)
+        ctx.notifier.send_text(chat_id, "You have no tracked searches yet. Use /add <name> to start one.")
+        return ""
+    ctx.notifier.send_text(chat_id, "Your tracked searches:", reply_markup=ui.searches_list_keyboard(subs))
+    return ""
 
 
 async def handle_setprice(args: list[str], chat_id: int, ctx: BotContext) -> str:

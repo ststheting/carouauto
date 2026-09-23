@@ -5,6 +5,7 @@ import logging
 
 import httpx
 
+from .callbacks import dispatch_callback
 from .commands import BotContext, dispatch, parse_command
 
 logger = logging.getLogger("carouauto")
@@ -48,7 +49,7 @@ async def set_bot_commands(client: httpx.AsyncClient, bot_token: str) -> None:
 
 
 async def get_updates(client: httpx.AsyncClient, bot_token: str, offset: int | None) -> list[dict]:
-    params: dict[str, int] = {"timeout": LONG_POLL_TIMEOUT_SECONDS}
+    params: dict[str, object] = {"timeout": LONG_POLL_TIMEOUT_SECONDS, "allowed_updates": ["message", "callback_query"]}
     if offset is not None:
         params["offset"] = offset
     response = await client.get(
@@ -58,6 +59,37 @@ async def get_updates(client: httpx.AsyncClient, bot_token: str, offset: int | N
     )
     response.raise_for_status()
     return response.json()["result"]
+
+
+async def handle_update(update: dict, ctx: BotContext) -> None:
+    message = update.get("message")
+    if message and "text" in message:
+        chat_id = message["chat"]["id"]
+        parsed = parse_command(message["text"])
+        if parsed is not None:
+            command, args = parsed
+            reply = await dispatch(command, args, chat_id, ctx)
+            if reply:
+                ctx.notifier.send_text(chat_id, reply)
+        return
+
+    callback = update.get("callback_query")
+    if callback:
+        data = callback.get("data", "")
+        chat_id = callback["message"]["chat"]["id"]
+        message_id = callback["message"]["message_id"]
+        callback_query_id = callback["id"]
+        result = await dispatch_callback(data, chat_id, ctx)
+        try:
+            ctx.notifier.edit_message(chat_id, message_id, result.text, result.reply_markup)
+        except Exception as exc:
+            logger.error("failed to edit message for callback '%s': %s", data, type(exc).__name__)
+        if result.force_reply_prompt:
+            ctx.notifier.send_text(chat_id, result.force_reply_prompt, reply_markup={"force_reply": True})
+        try:
+            ctx.notifier.answer_callback(callback_query_id, result.toast)
+        except Exception as exc:
+            logger.error("failed to answer callback '%s': %s", data, type(exc).__name__)
 
 
 async def run_command_listener(bot_token: str, ctx: BotContext) -> None:
@@ -85,14 +117,4 @@ async def run_command_listener(bot_token: str, ctx: BotContext) -> None:
 
             for update in updates:
                 offset = update["update_id"] + 1
-                message = update.get("message")
-                if not message or "text" not in message:
-                    continue
-                chat_id = message["chat"]["id"]
-                parsed = parse_command(message["text"])
-                if parsed is None:
-                    continue
-                command, args = parsed
-                reply = await dispatch(command, args, chat_id, ctx)
-                if reply:
-                    ctx.notifier.send_text(chat_id, reply)
+                await handle_update(update, ctx)

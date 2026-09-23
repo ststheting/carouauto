@@ -283,23 +283,42 @@ async def test_handle_remove_unknown_search(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handle_searches_lists_names_and_filters(tmp_path):
+async def test_handle_searches_sends_a_button_per_search(tmp_path):
     ctx = make_ctx(tmp_path)
     await handle_addurl(["speediance", "https://example.com/s", "100", "500"], 111, ctx)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await handle_searches([], 111, ctx)
 
-    assert "speediance" in reply
-    assert "100" in reply and "500" in reply
+    assert reply == ""
+    assert len(sent) == 1
+    chat_id, text, reply_markup = sent[0]
+    assert chat_id == 111
+    assert reply_markup["inline_keyboard"][0][0]["text"] == "speediance"
 
 
 @pytest.mark.asyncio
-async def test_handle_searches_with_none_tracked(tmp_path):
+async def test_handle_searches_with_none_tracked_sends_a_plain_message(tmp_path):
     ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await handle_searches([], 111, ctx)
 
-    assert "no tracked searches" in reply.lower()
+    assert reply == ""
+    assert "no tracked searches" in sent[0][1].lower()
+    assert sent[0][2] is None
 
 
 @pytest.mark.asyncio
