@@ -43,9 +43,13 @@ def search_panel_text(sub: UserSearch) -> str:
 def search_panel_keyboard(sub: UserSearch) -> dict:
     pause_label = "▶️ Resume" if sub.paused else "⏸ Pause"
     bumped_label = "👁 Show bumped" if sub.hide_bumped else "🙈 Hide bumped"
+    condition_label = f"Condition: {sub.condition_filter}" if sub.condition_filter else "Condition: Any"
     return inline_keyboard(
         [
             [(pause_label, f"tg:{sub.search_id}:pa"), (bumped_label, f"tg:{sub.search_id}:hb")],
+            [(condition_label, f"cd:{sub.search_id}")],
+            [("💰 Set price", f"pp:{sub.search_id}"), ("🚫 Exclude words", f"px:{sub.search_id}")],
+            [("🗑 Remove", f"rm:{sub.search_id}")],
             [("⬅️ Back", "ls")],
         ]
     )

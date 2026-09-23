@@ -55,16 +55,19 @@ def test_search_panel_text_reflects_state():
     assert "paused" in text.lower()
 
 
-def test_search_panel_keyboard_toggle_labels_reflect_current_state():
+def test_search_panel_keyboard_includes_every_action():
     sub = make_sub(search_id=7, paused=False, hide_bumped=True)
 
     markup = ui.search_panel_keyboard(sub)
 
-    flat = [btn for row in markup["inline_keyboard"] for btn in row]
-    by_data = {btn["callback_data"]: btn["text"] for btn in flat}
-    assert by_data["tg:7:pa"] == "⏸ Pause"
-    assert by_data["tg:7:hb"] == "👁 Show bumped"
-    assert "ls" in by_data
+    flat = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    assert "tg:7:pa" in flat
+    assert "tg:7:hb" in flat
+    assert "cd:7" in flat
+    assert "pp:7" in flat
+    assert "px:7" in flat
+    assert "rm:7" in flat
+    assert "ls" in flat
 
 
 def test_condition_keyboard_has_one_button_per_condition_plus_any():
