@@ -76,6 +76,21 @@ async def dispatch_callback(data: str, chat_id: int, ctx: BotContext) -> Callbac
                 ctx.subscriptions.set_hide_bumped(chat_id, sub.name, not sub.hide_bumped)
             return _panel_result(chat_id, search_id, ctx)
 
+        if verb == "cd":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            return CallbackResult(text=f"Set condition for '{sub.name}':", reply_markup=ui.condition_keyboard(sub))
+
+        if verb == "cds":
+            search_id, idx = int(parts[1]), int(parts[2])
+            sub = ctx.subscriptions.get_search_by_id(chat_id, search_id)
+            if sub is None:
+                return _stale_search_result()
+            condition = ui.CONDITIONS[idx] if idx < len(ui.CONDITIONS) else None
+            ctx.subscriptions.set_condition_filter(chat_id, sub.name, condition)
+            return _panel_result(chat_id, search_id, ctx)
+
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")
     except Exception as exc:
         logger.error("error handling callback '%s': %s", data, type(exc).__name__)

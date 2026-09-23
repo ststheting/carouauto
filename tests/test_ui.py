@@ -65,3 +65,15 @@ def test_search_panel_keyboard_toggle_labels_reflect_current_state():
     assert by_data["tg:7:pa"] == "⏸ Pause"
     assert by_data["tg:7:hb"] == "👁 Show bumped"
     assert "ls" in by_data
+
+
+def test_condition_keyboard_has_one_button_per_condition_plus_any():
+    sub = make_sub(search_id=3)
+
+    markup = ui.condition_keyboard(sub)
+
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert [b["text"] for b in flat[:-2]] == list(ui.CONDITIONS)
+    assert flat[-2]["text"] == "Any"
+    assert flat[-2]["callback_data"] == "cds:3:5"
+    assert flat[-1]["callback_data"] == "sp:3"  # back to panel

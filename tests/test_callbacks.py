@@ -113,3 +113,39 @@ async def test_unknown_verb_returns_a_generic_error_without_raising(tmp_path):
 
     assert isinstance(result, CallbackResult)
     assert result.reply_markup is None
+
+
+@pytest.mark.asyncio
+async def test_cd_opens_the_condition_picker(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"cd:{search_id}", 111, ctx)
+
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    assert any(b["text"] == "Brand new" for b in flat)
+
+
+@pytest.mark.asyncio
+async def test_cds_sets_the_condition_and_returns_to_the_panel(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"cds:{search_id}:0", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).condition_filter == "Brand new"
+    assert "speediance" in result.text  # back on the panel
+
+
+@pytest.mark.asyncio
+async def test_cds_any_clears_the_condition(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.subscriptions.set_condition_filter(111, "speediance", "Brand new")
+
+    await dispatch_callback(f"cds:{search_id}:5", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).condition_filter is None

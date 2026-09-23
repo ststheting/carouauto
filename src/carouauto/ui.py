@@ -49,3 +49,13 @@ def search_panel_keyboard(sub: UserSearch) -> dict:
             [("⬅️ Back", "ls")],
         ]
     )
+
+
+CONDITIONS = ("Brand new", "Like new", "Lightly used", "Well used", "Heavily used")
+
+
+def condition_keyboard(sub: UserSearch) -> dict:
+    rows = [[(cond, f"cds:{sub.search_id}:{i}")] for i, cond in enumerate(CONDITIONS)]
+    rows.append([("Any", f"cds:{sub.search_id}:5")])
+    rows.append([("⬅️ Back", f"sp:{sub.search_id}")])
+    return inline_keyboard(rows)
