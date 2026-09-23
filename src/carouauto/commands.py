@@ -50,6 +50,7 @@ class PendingInput:
     kind: str  # "setprice" | "setexclude" | "add_query" | "add_price"
     search_id: int | None
     created_at: datetime
+    query: str | None = None
 
 
 # Mobile keyboards (notably iOS) auto-convert straight quotes to "smart"

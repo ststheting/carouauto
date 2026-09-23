@@ -8,7 +8,16 @@ import httpx
 
 from . import ui
 from .callbacks import dispatch_callback
-from .commands import PENDING_EXPIRY_SECONDS, BotContext, PendingInput, dispatch, parse_command
+from .commands import (
+    PENDING_EXPIRY_SECONDS,
+    BotContext,
+    PendingInput,
+    _build_carousell_search_url,
+    _finish_add,
+    _is_url,
+    dispatch,
+    parse_command,
+)
 
 logger = logging.getLogger("carouauto")
 
@@ -74,6 +83,13 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
             age = (datetime.now(timezone.utc) - pending.created_at).total_seconds()
             if age > PENDING_EXPIRY_SECONDS:
                 del ctx.pending[chat_id]
+            elif pending.kind == "add_query":
+                pending.query = text.strip()
+                ctx.notifier.send_text(chat_id, f"Track '{pending.query}'?", reply_markup=ui.add_flow_keyboard())
+                return
+            elif pending.kind == "add_price":
+                await _apply_pending_add_price(pending, text, chat_id, ctx)
+                return
             else:
                 await _apply_pending_reply(pending, text, chat_id, ctx)
                 return
@@ -138,6 +154,18 @@ async def _apply_pending_reply(pending: PendingInput, text: str, chat_id: int, c
     del ctx.pending[chat_id]
     updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
     ctx.notifier.send_text(chat_id, ui.search_panel_text(updated), reply_markup=ui.search_panel_keyboard(updated))
+
+
+async def _apply_pending_add_price(pending: PendingInput, text: str, chat_id: int, ctx: BotContext) -> None:
+    parsed = _parse_two_optional_numbers(text)
+    if parsed == "invalid":
+        ctx.notifier.send_text(chat_id, "min and max must both be numbers, or reply `none`. Try again:")
+        return  # pending state kept
+    min_price, max_price = parsed
+    del ctx.pending[chat_id]
+    url = pending.query if _is_url(pending.query) else _build_carousell_search_url(pending.query)
+    reply = _finish_add(chat_id, pending.query, url, min_price, max_price, ctx)
+    ctx.notifier.send_text(chat_id, reply)
 
 
 async def run_command_listener(bot_token: str, ctx: BotContext) -> None:

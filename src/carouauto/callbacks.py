@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import ui
-from .commands import BotContext, PendingInput
+from .commands import BotContext, PendingInput, _build_carousell_search_url, _finish_add, _is_url
 
 logger = logging.getLogger("carouauto")
 
@@ -138,6 +138,33 @@ async def dispatch_callback(data: str, chat_id: int, ctx: BotContext) -> Callbac
 
         if verb == "rmn":
             return _panel_result(chat_id, int(parts[1]), ctx)
+
+        if verb == "afy":
+            pending = ctx.pending.get(chat_id)
+            if pending is None or pending.kind not in ("add_query", "add_price") or not pending.query:
+                return CallbackResult(text="That add flow expired. Send /add to start again.", reply_markup=None)
+            query = pending.query
+            del ctx.pending[chat_id]
+            url = query if _is_url(query) else _build_carousell_search_url(query)
+            text = _finish_add(chat_id, query, url, None, None, ctx)
+            return CallbackResult(text=text, reply_markup=None)
+
+        if verb == "afp":
+            pending = ctx.pending.get(chat_id)
+            if pending is None or not pending.query:
+                return CallbackResult(text="That add flow expired. Send /add to start again.", reply_markup=None)
+            ctx.pending[chat_id] = PendingInput(
+                kind="add_price", search_id=None, created_at=datetime.now(timezone.utc), query=pending.query
+            )
+            return CallbackResult(
+                text=f"Tracking '{pending.query}'.",
+                reply_markup=None,
+                force_reply_prompt="Reply with min and max, e.g. `100 500`, or `none` for no price filter.",
+            )
+
+        if verb == "afc":
+            ctx.pending.pop(chat_id, None)
+            return CallbackResult(text="Cancelled.", reply_markup=None)
 
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")
     except Exception as exc:

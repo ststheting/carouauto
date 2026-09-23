@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from carouauto.commands import BotContext
+from carouauto.commands import BotContext, PendingInput
 from carouauto.callbacks import CallbackResult, dispatch_callback
 from carouauto.db import SeenStore
 from carouauto.subscriptions import SubscriptionStore
@@ -227,3 +227,47 @@ async def test_rmn_cancels_back_to_the_panel(tmp_path):
 
     assert ctx.subscriptions.get_search_by_id(111, search_id) is not None
     assert "speediance" in result.text
+
+
+@pytest.mark.asyncio
+async def test_afy_creates_the_search_from_the_pending_query(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.pending[111] = PendingInput(kind="add_query", search_id=None, created_at=datetime.now(timezone.utc))
+    ctx.pending[111].query = "speediance"  # set by the listener before this callback fires, per Task 12 Step 3
+
+    result = await dispatch_callback("afy", 111, ctx)
+
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert found is not None
+    assert found.url == "https://www.carousell.sg/search/speediance?sort_by=3"
+    assert "added" in result.text.lower()
+    assert 111 not in ctx.pending
+
+
+@pytest.mark.asyncio
+async def test_afp_prompts_for_a_price_range(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.pending[111] = PendingInput(kind="add_query", search_id=None, created_at=datetime.now(timezone.utc))
+    ctx.pending[111].query = "speediance"
+
+    result = await dispatch_callback("afp", 111, ctx)
+
+    assert result.force_reply_prompt is not None
+    assert ctx.pending[111].kind == "add_price"
+    assert ctx.pending[111].query == "speediance"  # carried forward
+
+
+@pytest.mark.asyncio
+async def test_afc_cancels_the_add_flow(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.pending[111] = PendingInput(kind="add_query", search_id=None, created_at=datetime.now(timezone.utc))
+    ctx.pending[111].query = "speediance"
+
+    result = await dispatch_callback("afc", 111, ctx)
+
+    assert "cancelled" in result.text.lower()
+    assert 111 not in ctx.pending
+    assert ctx.subscriptions.get_search(111, "speediance") is None

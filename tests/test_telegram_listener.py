@@ -163,3 +163,34 @@ async def test_a_command_while_pending_is_still_treated_as_a_command(tmp_path):
     await handle_update(update, ctx)
 
     assert 111 in ctx.pending  # untouched — /status isn't the awaited reply
+
+
+@pytest.mark.asyncio
+async def test_a_reply_while_pending_add_query_sends_the_add_flow_buttons(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.pending[111] = PendingInput(kind="add_query", search_id=None, created_at=datetime.now(timezone.utc))
+    update = {"update_id": 1, "message": {"chat": {"id": 111}, "text": "speediance"}}
+
+    await handle_update(update, ctx)
+
+    assert ctx.pending[111].kind == "add_query"
+    assert ctx.pending[111].query == "speediance"
+    chat_id, text, reply_markup = ctx.notifier.sent[-1]
+    flat = [b["callback_data"] for row in reply_markup["inline_keyboard"] for b in row]
+    assert flat == ["afy", "afp", "afc"]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_while_pending_add_price_finishes_the_add(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.pending[111] = PendingInput(kind="add_price", search_id=None, created_at=datetime.now(timezone.utc))
+    ctx.pending[111].query = "speediance"
+    update = {"update_id": 1, "message": {"chat": {"id": 111}, "text": "100 500"}}
+
+    await handle_update(update, ctx)
+
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert (found.min_price, found.max_price) == (100.0, 500.0)
+    assert 111 not in ctx.pending
