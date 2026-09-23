@@ -271,3 +271,40 @@ async def test_afc_cancels_the_add_flow(tmp_path):
     assert "cancelled" in result.text.lower()
     assert 111 not in ctx.pending
     assert ctx.subscriptions.get_search(111, "speediance") is None
+
+
+@pytest.mark.asyncio
+async def test_cmt_mutes_the_search_and_keeps_the_card_caption(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"cmt:{search_id}", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
+    assert "muted" in (result.toast or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_cmt_on_a_stale_search_does_not_raise(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    result = await dispatch_callback("cmt:999999", 111, ctx)
+
+    assert "no longer exists" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_cbb_toggles_hide_bumped_and_updates_the_card_keyboard(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    assert ctx.subscriptions.get_search_by_id(111, search_id).hide_bumped is True  # default
+
+    result = await dispatch_callback(f"cbb:{search_id}", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).hide_bumped is False
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    bumped_button = next(b for b in flat if b.get("callback_data") == f"cbb:{search_id}")
+    assert "hide" in bumped_button["text"].lower()

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import httpx
 
 from . import ui
-from .callbacks import dispatch_callback
+from .callbacks import CARD_TEXT_UNCHANGED, dispatch_callback
 from .commands import (
     PENDING_EXPIRY_SECONDS,
     BotContext,
@@ -108,9 +108,10 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
         chat_id = callback["message"]["chat"]["id"]
         message_id = callback["message"]["message_id"]
         callback_query_id = callback["id"]
-        result = await dispatch_callback(data, chat_id, ctx)
+        result = await dispatch_callback(data, chat_id, ctx, callback["message"].get("reply_markup"))
+        text = callback["message"].get("text", "") if result.text == CARD_TEXT_UNCHANGED else result.text
         try:
-            ctx.notifier.edit_message(chat_id, message_id, result.text, result.reply_markup)
+            ctx.notifier.edit_message(chat_id, message_id, text, result.reply_markup)
         except Exception as exc:
             logger.error("failed to edit message for callback '%s': %s", data, type(exc).__name__)
         if result.force_reply_prompt:
