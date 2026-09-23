@@ -1,4 +1,5 @@
 from carouauto import ui
+from carouauto.subscriptions import UserSearch
 
 
 def test_inline_keyboard_builds_telegram_shaped_markup():
@@ -23,3 +24,44 @@ def test_inline_keyboard_rejects_callback_data_over_the_telegram_limit():
         assert False, "expected a ValueError"
     except ValueError as exc:
         assert "64" in str(exc)
+
+
+def make_sub(search_id=1, chat_id=111, name="speediance", paused=False, hide_bumped=True,
+             min_price=None, max_price=None, exclude_keywords=None, condition_filter=None,
+             url="https://example.com"):
+    return UserSearch(
+        search_id=search_id, chat_id=chat_id, name=name, url=url,
+        min_price=min_price, max_price=max_price, exclude_keywords=exclude_keywords,
+        condition_filter=condition_filter, paused=paused, hide_bumped=hide_bumped,
+    )
+
+
+def test_searches_list_keyboard_has_one_button_per_search():
+    subs = [make_sub(search_id=1, name="speediance"), make_sub(search_id=2, name="switch")]
+
+    markup = ui.searches_list_keyboard(subs)
+
+    buttons = markup["inline_keyboard"]
+    assert [row[0]["text"] for row in buttons] == ["speediance", "switch"]
+    assert [row[0]["callback_data"] for row in buttons] == ["sp:1", "sp:2"]
+
+
+def test_search_panel_text_reflects_state():
+    sub = make_sub(name="speediance", paused=True, hide_bumped=False)
+
+    text = ui.search_panel_text(sub)
+
+    assert "speediance" in text
+    assert "paused" in text.lower()
+
+
+def test_search_panel_keyboard_toggle_labels_reflect_current_state():
+    sub = make_sub(search_id=7, paused=False, hide_bumped=True)
+
+    markup = ui.search_panel_keyboard(sub)
+
+    flat = [btn for row in markup["inline_keyboard"] for btn in row]
+    by_data = {btn["callback_data"]: btn["text"] for btn in flat}
+    assert by_data["tg:7:pa"] == "⏸ Pause"
+    assert by_data["tg:7:hb"] == "👁 Show bumped"
+    assert "ls" in by_data
