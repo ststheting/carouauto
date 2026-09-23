@@ -257,12 +257,25 @@ async def test_handle_add_duplicate_name_fails_clearly(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handle_add_with_no_args_gives_usage(tmp_path):
+async def test_handle_add_with_no_args_prompts_with_forcereply(tmp_path):
     ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await handle_add([], 111, ctx)
 
-    assert "usage" in reply.lower()
+    assert reply == ""
+    assert len(sent) == 1
+    chat_id, text, reply_markup = sent[0]
+    assert "search for" in text.lower()
+    assert reply_markup == {"force_reply": True}
+    assert ctx.pending[111].kind == "add_query"
+    assert ctx.pending[111].search_id is None
 
 
 @pytest.mark.asyncio

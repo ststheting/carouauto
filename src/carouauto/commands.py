@@ -163,11 +163,13 @@ def _finish_add(chat_id: int, name: str, url: str, min_price: float | None, max_
 
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 1:
-        return (
-            "Usage: /add <name> [query] [min] [max] — searches Carousell for <name> "
-            "itself if you don't give a separate query. Use /addurl for an exact "
-            "Carousell URL."
+        ctx.pending[chat_id] = PendingInput(
+            kind="add_query", search_id=None, created_at=datetime.now(timezone.utc)
         )
+        ctx.notifier.send_text(
+            chat_id, "What should I search for?", reply_markup={"force_reply": True}
+        )
+        return ""
     name = args[0]
     query = args[1] if len(args) >= 2 else args[0]
     prices = _parse_optional_price_args(args, 2)

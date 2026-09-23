@@ -71,3 +71,9 @@ def remove_confirm_keyboard(search_id: int) -> dict:
             [("Yes, remove it", f"rmy:{search_id}"), ("Cancel", f"rmn:{search_id}")],
         ]
     )
+
+
+def add_flow_keyboard() -> dict:
+    return inline_keyboard(
+        [[("✅ Add now", "afy"), ("💰 Set price range first", "afp")], [("Cancel", "afc")]]
+    )
