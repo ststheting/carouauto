@@ -1,11 +1,12 @@
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from carouauto.commands import BotContext, PendingInput
 from carouauto.db import SeenStore
 from carouauto.subscriptions import SubscriptionStore
-from carouauto.telegram_listener import handle_update
+from carouauto.telegram_listener import ADMIN_BOT_COMMANDS, DEFAULT_BOT_COMMANDS, handle_update, set_bot_commands
 
 
 class FakeNotifier:
@@ -242,3 +243,35 @@ async def test_a_reply_while_pending_add_price_finishes_the_add(tmp_path):
     found = ctx.subscriptions.get_search(111, "speediance")
     assert (found.min_price, found.max_price) == (100.0, 500.0)
     assert 111 not in ctx.pending
+
+
+def test_default_commands_exclude_admin_only_ones():
+    names = {c["command"] for c in DEFAULT_BOT_COMMANDS}
+    assert "revoke" not in names
+    assert "backup" not in names
+    assert "start" in names  # regular commands still present
+
+
+def test_admin_commands_include_everything():
+    names = {c["command"] for c in ADMIN_BOT_COMMANDS}
+    assert "revoke" in names
+    assert "backup" in names
+
+
+@pytest.mark.asyncio
+async def test_set_bot_commands_registers_default_and_admin_scoped_lists():
+    posted = []
+
+    class FakeAsyncClient:
+        async def post(self, url, json=None, timeout=None):
+            posted.append((url, json))
+            return httpx.Response(200, request=httpx.Request("POST", url))
+
+    await set_bot_commands(FakeAsyncClient(), "tok", admin_chat_id=42)
+
+    assert len(posted) == 2
+    default_call = next(p for p in posted if "scope" not in p[1])
+    admin_call = next(p for p in posted if "scope" in p[1])
+    assert default_call[1]["commands"] == DEFAULT_BOT_COMMANDS
+    assert admin_call[1]["commands"] == ADMIN_BOT_COMMANDS
+    assert admin_call[1]["scope"] == {"type": "chat", "chat_id": 42}

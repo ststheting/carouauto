@@ -28,7 +28,9 @@ LONG_POLL_TIMEOUT_SECONDS = 30
 # these commands and descriptions. This is a UX affordance only — it does not
 # restrict what a user can send; dispatch() is still the single source of
 # truth for what each command actually does and who can use it.
-BOT_COMMANDS = [
+ADMIN_ONLY_COMMANDS = {"revoke", "backup"}
+
+ADMIN_BOT_COMMANDS = [
     {"command": "start", "description": "Get started"},
     {"command": "register", "description": "Register: /register <password>"},
     {"command": "add", "description": "Track a search: /add <name> [query] [min] [max]"},
@@ -49,11 +51,19 @@ BOT_COMMANDS = [
     {"command": "help", "description": "Show all commands"},
 ]
 
+DEFAULT_BOT_COMMANDS = [c for c in ADMIN_BOT_COMMANDS if c["command"] not in ADMIN_ONLY_COMMANDS]
 
-async def set_bot_commands(client: httpx.AsyncClient, bot_token: str) -> None:
+# Kept for anything still importing the old name.
+BOT_COMMANDS = ADMIN_BOT_COMMANDS
+
+
+async def set_bot_commands(client: httpx.AsyncClient, bot_token: str, admin_chat_id: int) -> None:
+    base = f"{TELEGRAM_API_BASE}/bot{bot_token}/setMyCommands"
+    response = await client.post(base, json={"commands": DEFAULT_BOT_COMMANDS}, timeout=10)
+    response.raise_for_status()
     response = await client.post(
-        f"{TELEGRAM_API_BASE}/bot{bot_token}/setMyCommands",
-        json={"commands": BOT_COMMANDS},
+        base,
+        json={"commands": ADMIN_BOT_COMMANDS, "scope": {"type": "chat", "chat_id": admin_chat_id}},
         timeout=10,
     )
     response.raise_for_status()
@@ -175,11 +185,11 @@ async def _apply_pending_add_price(pending: PendingInput, text: str, chat_id: in
     ctx.notifier.send_text(chat_id, reply)
 
 
-async def run_command_listener(bot_token: str, ctx: BotContext) -> None:
+async def run_command_listener(bot_token: str, ctx: BotContext, admin_chat_id: int) -> None:
     offset: int | None = None
     async with httpx.AsyncClient() as client:
         try:
-            await set_bot_commands(client, bot_token)
+            await set_bot_commands(client, bot_token, admin_chat_id)
         except httpx.HTTPError as exc:
             # Nice-to-have UX only — never let this block the bot from starting.
             logger.error("failed to set bot command menu: %s", type(exc).__name__)

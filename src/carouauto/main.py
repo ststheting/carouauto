@@ -65,7 +65,7 @@ async def main() -> None:
                 poll_jitter_fraction=config.poll_jitter_fraction,
                 browser_started_at=browser_started_at,
             ),
-            run_command_listener(config.telegram_bot_token, ctx),
+            run_command_listener(config.telegram_bot_token, ctx, admin_chat_id),
         )
     finally:
         try:
