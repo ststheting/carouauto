@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from . import ui
-from .commands import BotContext
+from .commands import BotContext, PendingInput
 
 logger = logging.getLogger("carouauto")
 
@@ -90,6 +91,32 @@ async def dispatch_callback(data: str, chat_id: int, ctx: BotContext) -> Callbac
             condition = ui.CONDITIONS[idx] if idx < len(ui.CONDITIONS) else None
             ctx.subscriptions.set_condition_filter(chat_id, sub.name, condition)
             return _panel_result(chat_id, search_id, ctx)
+
+        if verb == "pp":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            ctx.pending[chat_id] = PendingInput(
+                kind="setprice", search_id=sub.search_id, created_at=datetime.now(timezone.utc)
+            )
+            return CallbackResult(
+                text=ui.search_panel_text(sub),
+                reply_markup=ui.search_panel_keyboard(sub),
+                force_reply_prompt=f"Reply with min and max for '{sub.name}', e.g. `100 500`, or `none`.",
+            )
+
+        if verb == "px":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            ctx.pending[chat_id] = PendingInput(
+                kind="setexclude", search_id=sub.search_id, created_at=datetime.now(timezone.utc)
+            )
+            return CallbackResult(
+                text=ui.search_panel_text(sub),
+                reply_markup=ui.search_panel_keyboard(sub),
+                force_reply_prompt=f"Reply with words to exclude for '{sub.name}', comma-separated, or `none`.",
+            )
 
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")
     except Exception as exc:

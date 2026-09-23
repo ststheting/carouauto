@@ -20,6 +20,12 @@ def make_ctx(tmp_path):
     )
 
 
+def test_bot_context_pending_defaults_to_empty_dict(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    assert ctx.pending == {}
+
+
 def test_parse_command_extracts_command_and_args():
     assert parse_command("/add speediance https://example.com 100 500") == (
         "add",

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from carouauto.commands import BotContext
@@ -149,3 +151,41 @@ async def test_cds_any_clears_the_condition(tmp_path):
     await dispatch_callback(f"cds:{search_id}:5", 111, ctx)
 
     assert ctx.subscriptions.get_search_by_id(111, search_id).condition_filter is None
+
+
+@pytest.mark.asyncio
+async def test_pp_prompts_for_price_and_records_pending_state(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"pp:{search_id}", 111, ctx)
+
+    assert result.force_reply_prompt is not None
+    assert "min" in result.force_reply_prompt.lower()
+    assert ctx.pending[111].kind == "setprice"
+    assert ctx.pending[111].search_id == search_id
+
+
+@pytest.mark.asyncio
+async def test_px_prompts_for_exclude_words_and_records_pending_state(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback(f"px:{search_id}", 111, ctx)
+
+    assert result.force_reply_prompt is not None
+    assert ctx.pending[111].kind == "setexclude"
+    assert ctx.pending[111].search_id == search_id
+
+
+@pytest.mark.asyncio
+async def test_pp_on_a_stale_search_does_not_set_pending_state(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    result = await dispatch_callback("pp:999999", 111, ctx)
+
+    assert "no longer exists" in result.text.lower()
+    assert 111 not in ctx.pending

@@ -5,7 +5,8 @@ import os
 import shlex
 import sqlite3
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Awaitable, Callable
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -38,6 +39,17 @@ class BotContext:
     states: dict[str, SearchState]
     db_path: str
     poll_interval_seconds: float
+    pending: dict[int, PendingInput] = field(default_factory=dict)
+
+
+PENDING_EXPIRY_SECONDS = 600
+
+
+@dataclass
+class PendingInput:
+    kind: str  # "setprice" | "setexclude" | "add_query" | "add_price"
+    search_id: int | None
+    created_at: datetime
 
 
 # Mobile keyboards (notably iOS) auto-convert straight quotes to "smart"
