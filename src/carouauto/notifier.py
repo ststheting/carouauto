@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
@@ -63,8 +64,48 @@ class TelegramNotifier:
     def send_alert(self, chat_id: int, text: str) -> None:
         self._send_text(chat_id, text)
 
-    def send_text(self, chat_id: int, text: str) -> None:
-        self._send_text(chat_id, text)
+    def send_text(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
+        self._send_text(chat_id, text, reply_markup)
+
+    def edit_message(
+        self, chat_id: int, message_id: int, text: str, reply_markup: dict | None
+    ) -> None:
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/editMessageText"
+        data = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
+        failure_name = ""
+        try:
+            response = self._client.post(url, data=data)
+        except httpx.HTTPError as e:
+            # Only the exception's class name escapes. httpx's own message
+            # embeds the request URL, which contains the bot token, so it
+            # must never be interpolated, chained, or re-raised. Raising
+            # outside this except block means __context__ is not set.
+            failure_name = type(e).__name__
+        if failure_name:
+            raise RuntimeError(f"Telegram edit failed: {failure_name}")
+        if response.status_code == 400 and "not modified" in response.text.lower():
+            return  # editing to identical content — not a real failure
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            failure_name = type(e).__name__
+        if failure_name:
+            raise RuntimeError(f"Telegram edit failed: {failure_name}")
+
+    def answer_callback(self, callback_query_id: str, text: str | None = None) -> None:
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/answerCallbackQuery"
+        data = {"callback_query_id": callback_query_id}
+        if text:
+            data["text"] = text
+        try:
+            response = self._client.post(url, data=data)
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            # Best-effort — the button's spinner just keeps spinning briefly
+            # on the user's client if this fails; never worth crashing over.
+            pass
 
     def send_document(self, chat_id: int, file_path: str, filename: str) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendDocument"
@@ -85,12 +126,15 @@ class TelegramNotifier:
         if failure_name:
             raise RuntimeError(f"Telegram document send failed: {failure_name}")
 
-    def _send_text(self, chat_id: int, text: str) -> None:
+    def _send_text(self, chat_id: int, text: str, reply_markup: dict | None = None) -> None:
         url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/sendMessage"
         failure_name = ""
+        data = {"chat_id": chat_id, "text": text}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
         for attempt in range(2):  # one initial attempt plus one retry
             try:
-                response = self._client.post(url, data={"chat_id": chat_id, "text": text})
+                response = self._client.post(url, data=data)
                 response.raise_for_status()
                 return
             except httpx.HTTPError as e:

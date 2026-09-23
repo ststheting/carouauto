@@ -1,8 +1,10 @@
+import json
+
 import httpx
 import pytest
 
 from carouauto.models import Listing
-from carouauto.notifier import MAX_MESSAGE_CHARS, TelegramNotifier, format_message
+from carouauto.notifier import MAX_MESSAGE_CHARS, TELEGRAM_API_BASE, TelegramNotifier, format_message
 
 BOT_TOKEN = "123456:SUPER-SECRET-BOT-TOKEN"
 CHAT_ID = 999
@@ -195,3 +197,93 @@ def test_send_document_raises_without_leaking_the_token(tmp_path):
     assert BOT_TOKEN not in str(excinfo.value)
     assert excinfo.value.__cause__ is None
     assert excinfo.value.__context__ is None
+
+
+def test_send_text_includes_reply_markup_when_given():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+    markup = {"inline_keyboard": [[{"text": "Ok", "callback_data": "x"}]]}
+
+    notifier.send_text(CHAT_ID, "hi", reply_markup=markup)
+
+    _, data, _ = client.posts[0]
+    assert json.loads(data["reply_markup"]) == markup
+
+
+def test_send_text_omits_reply_markup_when_not_given():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+
+    notifier.send_text(CHAT_ID, "hi")
+
+    _, data, _ = client.posts[0]
+    assert "reply_markup" not in data
+
+
+def test_edit_message_posts_new_text_and_markup():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+    markup = {"inline_keyboard": [[{"text": "Back", "callback_data": "ls"}]]}
+
+    notifier.edit_message(CHAT_ID, 555, "updated text", markup)
+
+    url, data, _ = client.posts[0]
+    assert url == f"{TELEGRAM_API_BASE}/bot{BOT_TOKEN}/editMessageText"
+    assert data["chat_id"] == CHAT_ID
+    assert data["message_id"] == 555
+    assert data["text"] == "updated text"
+    assert json.loads(data["reply_markup"]) == markup
+
+
+def test_edit_message_swallows_message_not_modified_error():
+    class NotModifiedClient:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, url, data=None, files=None):
+            self.posts.append((url, data, files))
+            return httpx.Response(
+                400,
+                json={"ok": False, "description": "Bad Request: message is not modified"},
+                request=httpx.Request("POST", url),
+            )
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=NotModifiedClient())
+
+    notifier.edit_message(CHAT_ID, 555, "same text", None)  # must not raise
+
+
+def test_edit_message_raises_on_a_real_http_error_without_leaking_the_token():
+    class FailingClient:
+        def post(self, url, data=None, files=None):
+            raise httpx.ConnectError(f"connection failed for {url}")
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=FailingClient())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        notifier.edit_message(CHAT_ID, 555, "text", None)
+
+    assert BOT_TOKEN not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
+def test_answer_callback_posts_the_callback_query_id():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+
+    notifier.answer_callback("cbq123", "Muted!")
+
+    url, data, _ = client.posts[0]
+    assert url == f"{TELEGRAM_API_BASE}/bot{BOT_TOKEN}/answerCallbackQuery"
+    assert data == {"callback_query_id": "cbq123", "text": "Muted!"}
+
+
+def test_answer_callback_without_text_omits_it():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+
+    notifier.answer_callback("cbq123")
+
+    _, data, _ = client.posts[0]
+    assert data == {"callback_query_id": "cbq123"}
