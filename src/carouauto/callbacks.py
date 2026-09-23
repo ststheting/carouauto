@@ -56,7 +56,7 @@ def _panel_result(chat_id: int, search_id: int, ctx: BotContext) -> CallbackResu
 
 def _card_keyboard_with_updated_bumped_label(existing_markup: dict, search_id: int, hide_bumped: bool) -> dict:
     bumped_label = "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
-    rows = [row[:] for row in existing_markup["inline_keyboard"]]
+    rows = [[dict(button) for button in row] for row in existing_markup["inline_keyboard"]]
     for row in rows:
         for button in row:
             if button.get("callback_data") == f"cbb:{search_id}":
@@ -198,8 +198,10 @@ async def dispatch_callback(
                 return _stale_search_result()
             ctx.subscriptions.set_hide_bumped(chat_id, sub.name, not sub.hide_bumped)
             updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
-            markup = current_markup or ui.notification_card_keyboard(updated.search_id, "", updated.hide_bumped)
-            markup = _card_keyboard_with_updated_bumped_label(markup, updated.search_id, updated.hide_bumped)
+            if current_markup is None:
+                markup = ui.notification_card_keyboard(updated.search_id, "", updated.hide_bumped)
+            else:
+                markup = _card_keyboard_with_updated_bumped_label(current_markup, updated.search_id, updated.hide_bumped)
             return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast="Updated.")
 
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")

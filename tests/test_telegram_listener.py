@@ -12,6 +12,7 @@ class FakeNotifier:
     def __init__(self):
         self.sent = []
         self.edits = []
+        self.markup_edits = []
         self.answers = []
 
     def send_text(self, chat_id, text, reply_markup=None):
@@ -19,6 +20,9 @@ class FakeNotifier:
 
     def edit_message(self, chat_id, message_id, text, reply_markup):
         self.edits.append((chat_id, message_id, text, reply_markup))
+
+    def edit_reply_markup(self, chat_id, message_id, reply_markup):
+        self.markup_edits.append((chat_id, message_id, reply_markup))
 
     def answer_callback(self, callback_query_id, text=None):
         self.answers.append((callback_query_id, text))
@@ -65,6 +69,50 @@ async def test_handle_update_routes_a_callback_query_and_always_answers(tmp_path
 
     assert ctx.notifier.edits == [(111, 42, "You have no tracked searches yet. Use /add <name> to start one.", None)]
     assert ctx.notifier.answers == [("cbq1", None)]
+
+
+@pytest.mark.asyncio
+async def test_handle_update_on_a_card_verb_edits_only_the_keyboard_of_a_photo_message(tmp_path):
+    # A real Telegram photo-card message has no "text" key — only "caption" —
+    # and editMessageText cannot touch a photo message's caption or markup at
+    # all. This exercises exactly that shape end to end through handle_update.
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    card_markup = {
+        "inline_keyboard": [
+            [{"text": "Open listing", "url": "https://example.com/p/1"}],
+            [
+                {"text": "🔇 Mute this search", "callback_data": f"cmt:{search_id}"},
+                {"text": "🙈 Hide bumped", "callback_data": f"cbb:{search_id}"},
+            ],
+        ]
+    }
+    update = {
+        "update_id": 5,
+        "callback_query": {
+            "id": "cbq2",
+            "data": f"cmt:{search_id}",
+            "message": {
+                "chat": {"id": 111},
+                "message_id": 77,
+                "caption": "New listing for 'speediance':\n\nItem\nS$10",
+                "reply_markup": card_markup,
+            },
+        },
+    }
+
+    await handle_update(update, ctx)
+
+    assert ctx.notifier.edits == []  # editMessageText (which can't edit a photo) is never called
+    assert len(ctx.notifier.markup_edits) == 1
+    chat_id, message_id, reply_markup = ctx.notifier.markup_edits[0]
+    assert chat_id == 111
+    assert message_id == 77
+    flat = [b for row in reply_markup["inline_keyboard"] for b in row]
+    assert any(b.get("url") == "https://example.com/p/1" for b in flat)  # listing URL preserved
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
+    assert "muted" in ctx.notifier.answers[0][1].lower()
 
 
 @pytest.mark.asyncio

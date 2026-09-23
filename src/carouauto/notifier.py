@@ -108,6 +108,31 @@ class TelegramNotifier:
         if failure_name:
             raise RuntimeError(f"Telegram edit failed: {failure_name}")
 
+    def edit_reply_markup(self, chat_id: int, message_id: int, reply_markup: dict | None) -> None:
+        url = f"{TELEGRAM_API_BASE}/bot{self._bot_token}/editMessageReplyMarkup"
+        data = {"chat_id": chat_id, "message_id": message_id}
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(reply_markup)
+        failure_name = ""
+        try:
+            response = self._client.post(url, data=data)
+        except httpx.HTTPError as e:
+            # Only the exception's class name escapes. httpx's own message
+            # embeds the request URL, which contains the bot token, so it
+            # must never be interpolated, chained, or re-raised. Raising
+            # outside this except block means __context__ is not set.
+            failure_name = type(e).__name__
+        if failure_name:
+            raise RuntimeError(f"Telegram edit failed: {failure_name}")
+        if response.status_code == 400 and "not modified" in response.text.lower():
+            return  # editing to identical content — not a real failure
+        try:
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            failure_name = type(e).__name__
+        if failure_name:
+            raise RuntimeError(f"Telegram edit failed: {failure_name}")
+
     def send_photo(
         self, chat_id: int, photo_url: str, caption: str, reply_markup: dict | None
     ) -> None:

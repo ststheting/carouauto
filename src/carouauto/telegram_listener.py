@@ -109,9 +109,15 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
         message_id = callback["message"]["message_id"]
         callback_query_id = callback["id"]
         result = await dispatch_callback(data, chat_id, ctx, callback["message"].get("reply_markup"))
-        text = callback["message"].get("text", "") if result.text == CARD_TEXT_UNCHANGED else result.text
         try:
-            ctx.notifier.edit_message(chat_id, message_id, text, result.reply_markup)
+            if result.text == CARD_TEXT_UNCHANGED:
+                # A notification card's text/caption must stay exactly as it
+                # was — editMessageReplyMarkup updates only the keyboard and
+                # works the same whether the underlying message is text or a
+                # photo (a photo message has no "text" field to substitute).
+                ctx.notifier.edit_reply_markup(chat_id, message_id, result.reply_markup)
+            else:
+                ctx.notifier.edit_message(chat_id, message_id, result.text, result.reply_markup)
         except Exception as exc:
             logger.error("failed to edit message for callback '%s': %s", data, type(exc).__name__)
         if result.force_reply_prompt:

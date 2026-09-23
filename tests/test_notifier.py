@@ -300,6 +300,55 @@ def test_edit_message_raises_on_a_real_http_error_without_leaking_the_token():
     assert excinfo.value.__context__ is None
 
 
+def test_edit_reply_markup_posts_only_the_markup_no_text_or_caption():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+    markup = {"inline_keyboard": [[{"text": "🔇 Mute this search", "callback_data": "cmt:7"}]]}
+
+    notifier.edit_reply_markup(CHAT_ID, 555, markup)
+
+    url, data, _ = client.posts[0]
+    assert url == f"{TELEGRAM_API_BASE}/bot{BOT_TOKEN}/editMessageReplyMarkup"
+    assert data["chat_id"] == CHAT_ID
+    assert data["message_id"] == 555
+    assert "text" not in data
+    assert "caption" not in data
+    assert json.loads(data["reply_markup"]) == markup
+
+
+def test_edit_reply_markup_swallows_message_not_modified_error():
+    class NotModifiedClient:
+        def __init__(self):
+            self.posts = []
+
+        def post(self, url, data=None, files=None):
+            self.posts.append((url, data, files))
+            return httpx.Response(
+                400,
+                json={"ok": False, "description": "Bad Request: message is not modified"},
+                request=httpx.Request("POST", url),
+            )
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=NotModifiedClient())
+
+    notifier.edit_reply_markup(CHAT_ID, 555, {"inline_keyboard": []})  # must not raise
+
+
+def test_edit_reply_markup_raises_on_a_real_http_error_without_leaking_the_token():
+    class FailingClient:
+        def post(self, url, data=None, files=None):
+            raise httpx.ConnectError(f"connection failed for {url}")
+
+    notifier = TelegramNotifier(BOT_TOKEN, client=FailingClient())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        notifier.edit_reply_markup(CHAT_ID, 555, {"inline_keyboard": []})
+
+    assert BOT_TOKEN not in str(excinfo.value)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
 def test_answer_callback_posts_the_callback_query_id():
     client = FakeClient()
     notifier = TelegramNotifier(BOT_TOKEN, client=client)
