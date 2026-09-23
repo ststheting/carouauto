@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 
 import httpx
 
+from . import ui
 from .callbacks import dispatch_callback
-from .commands import BotContext, dispatch, parse_command
+from .commands import PENDING_EXPIRY_SECONDS, BotContext, PendingInput, dispatch, parse_command
 
 logger = logging.getLogger("carouauto")
 
@@ -65,7 +67,18 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
     message = update.get("message")
     if message and "text" in message:
         chat_id = message["chat"]["id"]
-        parsed = parse_command(message["text"])
+        text = message["text"]
+
+        pending = ctx.pending.get(chat_id)
+        if pending is not None and not text.startswith("/"):
+            age = (datetime.now(timezone.utc) - pending.created_at).total_seconds()
+            if age > PENDING_EXPIRY_SECONDS:
+                del ctx.pending[chat_id]
+            else:
+                await _apply_pending_reply(pending, text, chat_id, ctx)
+                return
+
+        parsed = parse_command(text)
         if parsed is not None:
             command, args = parsed
             reply = await dispatch(command, args, chat_id, ctx)
@@ -90,6 +103,41 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
             ctx.notifier.answer_callback(callback_query_id, result.toast)
         except Exception as exc:
             logger.error("failed to answer callback '%s': %s", data, type(exc).__name__)
+
+
+def _parse_two_optional_numbers(text: str) -> tuple[float | None, float | None] | str:
+    if text.strip().lower() == "none":
+        return None, None
+    parts = text.split()
+    if len(parts) != 2:
+        return "invalid"
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return "invalid"
+
+
+async def _apply_pending_reply(pending: PendingInput, text: str, chat_id: int, ctx: BotContext) -> None:
+    sub = ctx.subscriptions.get_search_by_id(chat_id, pending.search_id)
+    if sub is None:
+        del ctx.pending[chat_id]
+        ctx.notifier.send_text(chat_id, "That search no longer exists.")
+        return
+
+    if pending.kind == "setprice":
+        parsed = _parse_two_optional_numbers(text)
+        if parsed == "invalid":
+            ctx.notifier.send_text(chat_id, "min and max must both be numbers, or reply `none`. Try again:")
+            return  # pending state kept — user gets another attempt
+        min_price, max_price = parsed
+        ctx.subscriptions.set_price_filter(chat_id, sub.name, min_price, max_price)
+    elif pending.kind == "setexclude":
+        value = None if text.strip().lower() == "none" else text.strip()
+        ctx.subscriptions.set_exclude_keywords(chat_id, sub.name, value)
+
+    del ctx.pending[chat_id]
+    updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
+    ctx.notifier.send_text(chat_id, ui.search_panel_text(updated), reply_markup=ui.search_panel_keyboard(updated))
 
 
 async def run_command_listener(bot_token: str, ctx: BotContext) -> None:
