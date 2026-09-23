@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -6,7 +7,13 @@ import pytest
 from carouauto.commands import BotContext, PendingInput
 from carouauto.db import SeenStore
 from carouauto.subscriptions import SubscriptionStore
-from carouauto.telegram_listener import ADMIN_BOT_COMMANDS, DEFAULT_BOT_COMMANDS, handle_update, set_bot_commands
+from carouauto.telegram_listener import (
+    ADMIN_BOT_COMMANDS,
+    DEFAULT_BOT_COMMANDS,
+    handle_update,
+    run_command_listener,
+    set_bot_commands,
+)
 
 
 class FakeNotifier:
@@ -15,14 +22,25 @@ class FakeNotifier:
         self.edits = []
         self.markup_edits = []
         self.answers = []
+        # Toggles to simulate Telegram-side failures in specific calls,
+        # mirroring the RuntimeError TelegramNotifier raises after its retry.
+        self.raise_on_send_text = False
+        self.raise_on_edit_message = False
+        self.raise_on_edit_reply_markup = False
 
     def send_text(self, chat_id, text, reply_markup=None):
+        if self.raise_on_send_text:
+            raise RuntimeError("Telegram send failed after retry: ConnectError")
         self.sent.append((chat_id, text, reply_markup))
 
     def edit_message(self, chat_id, message_id, text, reply_markup):
+        if self.raise_on_edit_message:
+            raise RuntimeError("Telegram edit failed: ConnectError")
         self.edits.append((chat_id, message_id, text, reply_markup))
 
     def edit_reply_markup(self, chat_id, message_id, reply_markup):
+        if self.raise_on_edit_reply_markup:
+            raise RuntimeError("Telegram edit failed: ConnectError")
         self.markup_edits.append((chat_id, message_id, reply_markup))
 
     def answer_callback(self, callback_query_id, text=None):
@@ -114,6 +132,118 @@ async def test_handle_update_on_a_card_verb_edits_only_the_keyboard_of_a_photo_m
     assert any(b.get("url") == "https://example.com/p/1" for b in flat)  # listing URL preserved
     assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
     assert "muted" in ctx.notifier.answers[0][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_edit_falls_back_to_sending_a_fresh_message_and_still_answers(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.notifier.raise_on_edit_message = True
+    update = {
+        "update_id": 6,
+        "callback_query": {
+            "id": "cbq3",
+            "data": "ls",
+            "message": {"chat": {"id": 111}, "message_id": 88},
+        },
+    }
+
+    await handle_update(update, ctx)  # must not raise despite edit_message failing
+
+    assert ctx.notifier.edits == []  # the attempted edit_message raised, nothing recorded as succeeded
+    assert len(ctx.notifier.sent) == 1  # ...but the spec's fallback fresh message was sent
+    chat_id, text, reply_markup = ctx.notifier.sent[0]
+    assert chat_id == 111
+    assert "speediance" in text
+    assert reply_markup is not None
+    assert ctx.notifier.answers == [("cbq3", None)]  # the callback is still answered
+
+
+@pytest.mark.asyncio
+async def test_a_failed_markup_edit_on_a_card_sends_no_fallback_but_still_answers(tmp_path):
+    # CARD_TEXT_UNCHANGED means there's no real text behind the sentinel, so
+    # unlike the ordinary edit-failure case, there is nothing sensible to
+    # fall back to sending as a standalone message.
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.notifier.raise_on_edit_reply_markup = True
+    update = {
+        "update_id": 7,
+        "callback_query": {
+            "id": "cbq4",
+            "data": f"cmt:{search_id}",
+            "message": {
+                "chat": {"id": 111},
+                "message_id": 99,
+                "caption": "New listing for 'speediance':\n\nItem\nS$10",
+                "reply_markup": {"inline_keyboard": [[{"text": "x", "callback_data": f"cmt:{search_id}"}]]},
+            },
+        },
+    }
+
+    await handle_update(update, ctx)  # must not raise despite edit_reply_markup failing
+
+    assert ctx.notifier.markup_edits == []  # attempted, but raised
+    assert ctx.notifier.sent == []  # no fallback — nothing real to send in place of the sentinel
+    assert ctx.notifier.answers == [("cbq4", "Muted 'speediance'.")]
+
+
+@pytest.mark.asyncio
+async def test_answer_callback_fires_even_if_the_force_reply_send_fails(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.notifier.raise_on_send_text = True  # breaks the force-reply prompt send
+    update = {
+        "update_id": 8,
+        "callback_query": {
+            "id": "cbq5",
+            "data": f"pp:{search_id}",
+            "message": {"chat": {"id": 111}, "message_id": 100},
+        },
+    }
+
+    await handle_update(update, ctx)  # must not raise
+
+    # answer_callback ran despite the later force-reply send failing — proves
+    # it's no longer gated behind that send.
+    assert ctx.notifier.answers == [("cbq5", None)]
+
+
+@pytest.mark.asyncio
+async def test_run_command_listener_survives_a_handle_update_failure(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.notifier.raise_on_send_text = True  # blows up handle_update's send_text call for "/start"
+
+    calls = {"n": 0}
+
+    async def fake_get_updates(client, bot_token, offset):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"update_id": 1, "message": {"chat": {"id": 111}, "text": "/start"}}]
+        # Stop the infinite polling loop once we've proven it survived the
+        # first failure and came back around for another poll. CancelledError
+        # is a BaseException (not Exception), so it isn't swallowed by the
+        # loop's own `except Exception` guard around get_updates.
+        raise asyncio.CancelledError
+
+    async def fake_set_bot_commands(client, bot_token, admin_chat_id):
+        return None
+
+    monkeypatch.setattr("carouauto.telegram_listener.get_updates", fake_get_updates)
+    monkeypatch.setattr("carouauto.telegram_listener.set_bot_commands", fake_set_bot_commands)
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_command_listener("tok", ctx, admin_chat_id=42)
+
+    # If the loop's try/except around handle_update were missing, the
+    # RuntimeError from send_text would have propagated out of
+    # run_command_listener on the first iteration, and get_updates would
+    # never have been called a second time.
+    assert calls["n"] == 2
 
 
 @pytest.mark.asyncio

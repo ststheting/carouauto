@@ -130,12 +130,30 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
                 ctx.notifier.edit_message(chat_id, message_id, result.text, result.reply_markup)
         except Exception as exc:
             logger.error("failed to edit message for callback '%s': %s", data, type(exc).__name__)
-        if result.force_reply_prompt:
-            ctx.notifier.send_text(chat_id, result.force_reply_prompt, reply_markup={"force_reply": True})
+            # Spec: a failed edit (other than "not modified", which never
+            # raises) falls back to sending a fresh message — the original
+            # message may be too old to edit, or already deleted. Skip this
+            # for CARD_TEXT_UNCHANGED: there's no real text there, just a
+            # sentinel, so a fresh standalone message would be nonsense.
+            if result.text != CARD_TEXT_UNCHANGED:
+                try:
+                    ctx.notifier.send_text(chat_id, result.text, result.reply_markup)
+                except Exception as exc2:
+                    logger.error(
+                        "failed to send fallback message for callback '%s': %s", data, type(exc2).__name__
+                    )
+        # Answered before (and independent of) the force-reply send below, so
+        # every callback query is answered — stopping the button's loading
+        # spinner — even if that send fails.
         try:
             ctx.notifier.answer_callback(callback_query_id, result.toast)
         except Exception as exc:
             logger.error("failed to answer callback '%s': %s", data, type(exc).__name__)
+        if result.force_reply_prompt:
+            try:
+                ctx.notifier.send_text(chat_id, result.force_reply_prompt, reply_markup={"force_reply": True})
+            except Exception as exc:
+                logger.error("failed to send force-reply prompt for callback '%s': %s", data, type(exc).__name__)
 
 
 def _parse_two_optional_numbers(text: str) -> tuple[float | None, float | None] | str:
@@ -210,4 +228,17 @@ async def run_command_listener(bot_token: str, ctx: BotContext, admin_chat_id: i
 
             for update in updates:
                 offset = update["update_id"] + 1
-                await handle_update(update, ctx)
+                try:
+                    await handle_update(update, ctx)
+                except Exception as exc:
+                    # handle_update can call ctx.notifier.send_text(), which
+                    # raises RuntimeError after exhausting its one retry.
+                    # Without this guard that propagates out of the loop and
+                    # (via asyncio.gather in main.py) kills the process —
+                    # and since offset already advanced above, Telegram
+                    # would never redeliver this same update to unstick it.
+                    # Only the exception class name is logged — never
+                    # str(exc): httpx's own message embeds the bot token.
+                    logger.error(
+                        "error handling update %s: %s", update.get("update_id"), type(exc).__name__
+                    )

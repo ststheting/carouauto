@@ -10,9 +10,11 @@ from .commands import BotContext, PendingInput, _build_carousell_search_url, _fi
 logger = logging.getLogger("carouauto")
 
 # A marker CallbackResult.text can be set to, meaning "leave the message's
-# existing text alone — only the keyboard changed." editMessageText requires
-# a text value, so the listener substitutes the message's own current text
-# instead of actually sending this string.
+# existing text/caption alone — only the keyboard changed." A photo message's
+# content lives in "caption", not "text", so editMessageText can't touch it
+# at all. The listener instead calls editMessageReplyMarkup for this case,
+# which updates only the keyboard and works uniformly whether the underlying
+# message is text or a photo — it never sends this sentinel string anywhere.
 CARD_TEXT_UNCHANGED = "\x00__unchanged__\x00"
 
 

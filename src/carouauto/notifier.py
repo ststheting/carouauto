@@ -49,12 +49,6 @@ class TelegramNotifier:
                     self.send_text(chat_id, caption, markup)
             return
 
-        if len(listings) == 1:
-            self._send_text(
-                chat_id, f"New listing for '{search_name}':\n\n{format_message(listings[0])}"
-            )
-            return
-
         # Greedily pack listing bodies into messages that stay under Telegram's
         # size limit; the header goes on the first chunk only.
         header = f"{len(listings)} new listings for '{search_name}':"
