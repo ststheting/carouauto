@@ -35,10 +35,14 @@ def make_listing(i, title_len=0):
         title=f"Item {i}" + "x" * title_len,
         price="S$10",
         url=f"https://www.carousell.sg/p/item-{i}/",
-        thumbnail_url="",
+        thumbnail_url=f"https://example.com/thumb-{i}.jpg",
         posted_text="1 hour ago",
         condition="Well used",
     )
+
+
+def make_listings(n):
+    return [make_listing(i) for i in range(n)]
 
 
 def test_format_message_includes_title_price_time_and_url():
@@ -147,7 +151,7 @@ def test_large_batch_is_split_into_messages_under_the_size_limit():
     notifier = TelegramNotifier(BOT_TOKEN, client=client)
     listings = [make_listing(i, title_len=200) for i in range(60)]
 
-    notifier.send_new_listings(CHAT_ID, "speediance", listings)
+    notifier.send_new_listings(CHAT_ID, 7, "speediance", listings, hide_bumped=True)
 
     assert len(client.posts) > 1
     for _, data, _ in client.posts:
@@ -160,14 +164,42 @@ def test_large_batch_is_split_into_messages_under_the_size_limit():
         assert listing.url in combined
 
 
-def test_small_batch_still_sends_a_single_message():
+def test_send_new_listings_sends_one_card_per_listing_when_at_or_under_the_limit():
     client = FakeClient()
     notifier = TelegramNotifier(BOT_TOKEN, client=client)
 
-    notifier.send_new_listings(CHAT_ID, "speediance", [make_listing(1), make_listing(2)])
+    notifier.send_new_listings(CHAT_ID, 7, "speediance", make_listings(3), hide_bumped=True)
 
-    assert len(client.posts) == 1
-    assert client.posts[0][1]["text"].startswith("2 new listings for 'speediance':")
+    photo_posts = [p for p in client.posts if p[0].endswith("/sendPhoto")]
+    assert len(photo_posts) == 3
+    _, data, _ = photo_posts[0]
+    markup = json.loads(data["reply_markup"])
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert any(b.get("url") == "https://www.carousell.sg/p/item-0/" for b in flat)
+    assert any(b.get("callback_data") == "cmt:7" for b in flat)
+    assert any(b.get("callback_data") == "cbb:7" for b in flat)
+
+
+def test_send_new_listings_falls_back_to_batched_text_above_the_card_limit():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+
+    notifier.send_new_listings(CHAT_ID, 7, "speediance", make_listings(6), hide_bumped=True)
+
+    photo_posts = [p for p in client.posts if p[0].endswith("/sendPhoto")]
+    text_posts = [p for p in client.posts if p[0].endswith("/sendMessage")]
+    assert photo_posts == []
+    assert len(text_posts) == 1
+    assert "6 new listings" in text_posts[0][1]["text"]
+
+
+def test_send_new_listings_with_no_listings_sends_nothing():
+    client = FakeClient()
+    notifier = TelegramNotifier(BOT_TOKEN, client=client)
+
+    notifier.send_new_listings(CHAT_ID, 7, "speediance", [], hide_bumped=True)
+
+    assert client.posts == []
 
 
 def test_send_document_posts_the_file_with_the_given_chat_id(tmp_path):

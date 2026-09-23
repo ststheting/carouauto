@@ -77,3 +77,16 @@ def add_flow_keyboard() -> dict:
     return inline_keyboard(
         [[("✅ Add now", "afy"), ("💰 Set price range first", "afp")], [("Cancel", "afc")]]
     )
+
+
+def notification_card_keyboard(search_id: int, url: str, hide_bumped: bool) -> dict:
+    bumped_label = "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
+    return {
+        "inline_keyboard": [
+            [{"text": "Open listing", "url": url}],
+            [
+                {"text": "🔇 Mute this search", "callback_data": f"cmt:{search_id}"},
+                {"text": bumped_label, "callback_data": f"cbb:{search_id}"},
+            ],
+        ]
+    }

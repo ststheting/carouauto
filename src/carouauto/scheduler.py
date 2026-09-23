@@ -127,7 +127,7 @@ async def run_cycle_for_url(
             if filtered:
                 # If this raises, mark_seen below is skipped, so the same ids
                 # are retried for this subscriber next cycle.
-                notifier.send_new_listings(sub.chat_id, sub.name, filtered)
+                notifier.send_new_listings(sub.chat_id, sub.search_id, sub.name, filtered, sub.hide_bumped)
             seen_store.mark_seen(sub.search_id, all_ids)
         except Exception as exc:
             # A single subscriber's notify failure (e.g. a blocked/deactivated

@@ -47,12 +47,12 @@ def make_sub(search_id, chat_id, name="speediance", url="https://example.com",
 
 class FakeNotifier:
     def __init__(self, fail_for_chat_id=None):
-        self.new_listings_calls = []  # (chat_id, search_name, listings)
+        self.new_listings_calls = []  # (chat_id, search_id, search_name, listings, hide_bumped)
         self.alerts = []  # (chat_id, text)
         self._fail_for_chat_id = fail_for_chat_id
 
-    def send_new_listings(self, chat_id, search_name, listings):
-        self.new_listings_calls.append((chat_id, search_name, listings))
+    def send_new_listings(self, chat_id, search_id, search_name, listings, hide_bumped):
+        self.new_listings_calls.append((chat_id, search_id, search_name, listings, hide_bumped))
         if self._fail_for_chat_id == chat_id:
             raise RuntimeError("Telegram send failed after retry: HTTPError")
 
@@ -94,7 +94,7 @@ async def test_second_cycle_notifies_only_the_new_listing_to_the_subscriber(tmp_
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
-    chat_id, search_name, new_listings = notifier.new_listings_calls[0]
+    chat_id, search_id, search_name, new_listings, hide_bumped = notifier.new_listings_calls[0]
     assert (chat_id, search_name) == (111, "speediance")
     assert [l.listing_id for l in new_listings] == ["2"]
 
@@ -251,7 +251,7 @@ async def test_notify_failure_for_one_subscriber_does_not_block_the_other_subscr
     # broken_sub's own notify was attempted (and raised) ...
     assert [c[0] for c in failing.new_listings_calls] == [111, 222]
     # ... but healthy_sub still got its own new listing.
-    chat_id, search_name, new_listings = failing.new_listings_calls[1]
+    chat_id, search_id, search_name, new_listings, hide_bumped = failing.new_listings_calls[1]
     assert chat_id == 222
     assert [l.listing_id for l in new_listings] == ["2"]
 
@@ -436,7 +436,7 @@ async def test_confirmed_bumped_listing_is_still_notified_by_default(tmp_path):
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
-    _, _, new_listings = notifier.new_listings_calls[0]
+    _, _, _, new_listings, _ = notifier.new_listings_calls[0]
     assert new_listings[0].is_bumped is True
 
 
@@ -478,7 +478,7 @@ async def test_hide_bumped_subscriber_still_gets_a_confirmed_not_bumped_listing(
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
-    _, _, new_listings = notifier.new_listings_calls[0]
+    _, _, _, new_listings, _ = notifier.new_listings_calls[0]
     assert new_listings[0].is_bumped is False
 
 
@@ -556,7 +556,7 @@ async def test_hide_bumped_off_still_shows_an_old_never_bumped_listing(tmp_path)
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
-    _, _, new_listings = notifier.new_listings_calls[0]
+    _, _, _, new_listings, _ = notifier.new_listings_calls[0]
     assert [l.listing_id for l in new_listings] == ["3"]
     assert new_listings[0].is_bumped is True
 
@@ -581,5 +581,5 @@ async def test_bump_detail_page_fetch_failure_does_not_block_the_cycle(tmp_path)
     await run_cycle_for_url("https://example.com", [sub], state, fetch_updated, seen_store, notifier, "tunnel-info", ADMIN_CHAT_ID)
 
     assert len(notifier.new_listings_calls) == 1
-    _, _, new_listings = notifier.new_listings_calls[0]
+    _, _, _, new_listings, _ = notifier.new_listings_calls[0]
     assert new_listings[0].is_bumped is None

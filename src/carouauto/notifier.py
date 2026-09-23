@@ -5,6 +5,7 @@ import time
 
 import httpx
 
+from . import ui
 from .models import Listing
 
 TELEGRAM_API_BASE = "https://api.telegram.org"
@@ -12,6 +13,7 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 # Telegram's hard limit is ~4096 characters; stay under it with headroom.
 MAX_MESSAGE_CHARS = 4000
 RETRY_BACKOFF_SECONDS = 2
+CARD_LIMIT = 5
 
 
 def format_message(listing: Listing) -> str:
@@ -32,9 +34,21 @@ class TelegramNotifier:
         self._bot_token = bot_token
         self._client = client or httpx.Client(timeout=10.0)
 
-    def send_new_listings(self, chat_id: int, search_name: str, listings: list[Listing]) -> None:
+    def send_new_listings(
+        self, chat_id: int, search_id: int, search_name: str, listings: list[Listing], hide_bumped: bool
+    ) -> None:
         if not listings:
             return
+        if len(listings) <= CARD_LIMIT:
+            for listing in listings:
+                caption = f"New listing for '{search_name}':\n\n{format_message(listing)}"
+                markup = ui.notification_card_keyboard(search_id, listing.url, hide_bumped)
+                if listing.thumbnail_url:
+                    self.send_photo(chat_id, listing.thumbnail_url, caption, markup)
+                else:
+                    self.send_text(chat_id, caption, markup)
+            return
+
         if len(listings) == 1:
             self._send_text(
                 chat_id, f"New listing for '{search_name}':\n\n{format_message(listings[0])}"
