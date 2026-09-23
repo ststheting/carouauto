@@ -83,10 +83,12 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
 
 
 async def handle_start(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    return (
+    text = (
         "Welcome to carouauto — a Carousell listing monitor.\n"
         "Send /register <password> to get started, then /help for what you can do."
     )
+    ctx.notifier.send_text(chat_id, text, reply_markup=ui.main_menu_keyboard())
+    return ""
 
 
 async def handle_register(args: list[str], chat_id: int, ctx: BotContext) -> str:
@@ -101,7 +103,7 @@ async def handle_register(args: list[str], chat_id: int, ctx: BotContext) -> str
 
 async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
     minutes = round(ctx.poll_interval_seconds / 60)
-    return (
+    text = (
         "carouauto — Carousell listing monitor\n\n"
         f"Checks run roughly every {minutes} minutes — expect new listings "
         "a few minutes after they're posted, not instantly.\n\n"
@@ -124,6 +126,8 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         "/backup — admin only, get a copy of the database\n"
         "/help — this message"
     )
+    ctx.notifier.send_text(chat_id, text, reply_markup=ui.main_menu_keyboard())
+    return ""
 
 
 def _build_carousell_search_url(query: str) -> str:

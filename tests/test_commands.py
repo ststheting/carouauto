@@ -60,12 +60,23 @@ def test_parse_command_normalizes_smart_quotes_from_mobile_keyboards():
 
 
 @pytest.mark.asyncio
-async def test_handle_start_mentions_register(tmp_path):
+async def test_handle_start_sends_the_main_menu(tmp_path):
     ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await handle_start([], 111, ctx)
 
-    assert "/register" in reply
+    assert reply == ""
+    chat_id, text, reply_markup = sent[0]
+    assert "/register" in text
+    flat = [b["callback_data"] for row in reply_markup["inline_keyboard"] for b in row]
+    assert flat == ["mm:se", "mm:ad", "mm:st", "mm:he"]
 
 
 @pytest.mark.asyncio
@@ -108,12 +119,22 @@ async def test_handle_register_twice_reports_already_registered(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handle_help_mentions_the_poll_interval(tmp_path):
+async def test_handle_help_sends_the_main_menu(tmp_path):
     ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await handle_help([], 111, ctx)
 
-    assert "5 minute" in reply.lower()
+    assert reply == ""
+    chat_id, text, reply_markup = sent[0]
+    assert "5 minute" in text.lower()
+    assert reply_markup["inline_keyboard"][0][0]["callback_data"] == "mm:se"
 
 
 from carouauto.commands import (
@@ -620,10 +641,18 @@ async def test_dispatch_rejects_unregistered_user(tmp_path):
 @pytest.mark.asyncio
 async def test_dispatch_allows_public_commands_without_registration(tmp_path):
     ctx = make_ctx(tmp_path)
+    sent = []
+
+    class FakeNotifier:
+        def send_text(self, chat_id, text, reply_markup=None):
+            sent.append((chat_id, text, reply_markup))
+
+    ctx.notifier = FakeNotifier()
 
     reply = await dispatch("help", [], 111, ctx)
 
-    assert "carouauto" in reply.lower()
+    assert reply == ""
+    assert "carouauto" in sent[0][1].lower()
 
 
 @pytest.mark.asyncio

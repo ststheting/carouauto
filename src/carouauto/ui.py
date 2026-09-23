@@ -79,6 +79,15 @@ def add_flow_keyboard() -> dict:
     )
 
 
+def main_menu_keyboard() -> dict:
+    return inline_keyboard(
+        [
+            [("🔎 My searches", "mm:se"), ("➕ Add search", "mm:ad")],
+            [("📊 Status", "mm:st"), ("❓ Help", "mm:he")],
+        ]
+    )
+
+
 def notification_card_keyboard(search_id: int, url: str, hide_bumped: bool) -> dict:
     bumped_label = "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
     return {

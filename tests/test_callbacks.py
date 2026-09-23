@@ -308,3 +308,47 @@ async def test_cbb_toggles_hide_bumped_and_updates_the_card_keyboard(tmp_path):
     flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
     bumped_button = next(b for b in flat if b.get("callback_data") == f"cbb:{search_id}")
     assert "hide" in bumped_button["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_mm_se_shows_the_searches_list(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback("mm:se", 111, ctx)
+
+    assert "speediance" in result.text
+
+
+@pytest.mark.asyncio
+async def test_mm_ad_starts_the_guided_add_flow(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    result = await dispatch_callback("mm:ad", 111, ctx)
+
+    assert result.force_reply_prompt is not None
+    assert ctx.pending[111].kind == "add_query"
+
+
+@pytest.mark.asyncio
+async def test_mm_st_shows_status(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    result = await dispatch_callback("mm:st", 111, ctx)
+
+    assert "speediance" in result.text
+    assert "poll interval" in result.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_mm_he_shows_help_text(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    result = await dispatch_callback("mm:he", 111, ctx)
+
+    assert "/register" in result.text

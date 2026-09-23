@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import ui
-from .commands import BotContext, PendingInput, _build_carousell_search_url, _finish_add, _is_url
+from .commands import BotContext, PendingInput, _build_carousell_search_url, _finish_add, _is_url, handle_status
 
 logger = logging.getLogger("carouauto")
 
@@ -203,6 +203,32 @@ async def dispatch_callback(
             else:
                 markup = _card_keyboard_with_updated_bumped_label(current_markup, updated.search_id, updated.hide_bumped)
             return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast="Updated.")
+
+        if verb == "mm":
+            action = parts[1]
+            if action == "se":
+                return _searches_list_result(chat_id, ctx)
+            if action == "ad":
+                ctx.pending[chat_id] = PendingInput(
+                    kind="add_query", search_id=None, created_at=datetime.now(timezone.utc)
+                )
+                return CallbackResult(
+                    text="Adding a search.",
+                    reply_markup=None,
+                    force_reply_prompt="What should I search for?",
+                )
+            if action == "st":
+                text = await handle_status([], chat_id, ctx)
+                return CallbackResult(text=text, reply_markup=None)
+            if action == "he":
+                minutes = round(ctx.poll_interval_seconds / 60)
+                text = (
+                    "carouauto — Carousell listing monitor\n\n"
+                    f"Checks run roughly every {minutes} minutes.\n\n"
+                    "/register <password> — get access\n"
+                    "Use the buttons from /searches to manage what you track."
+                )
+                return CallbackResult(text=text, reply_markup=None)
 
         return CallbackResult(text="Unknown action.", reply_markup=None, toast="Unknown action")
     except Exception as exc:
