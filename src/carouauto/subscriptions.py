@@ -185,6 +185,13 @@ class SubscriptionStore:
         ).fetchone()
         return _row_to_user_search(row) if row else None
 
+    def get_search_by_id(self, chat_id: int, search_id: int) -> UserSearch | None:
+        row = self._conn.execute(
+            f"SELECT {_SEARCH_COLUMNS} FROM user_searches WHERE chat_id = ? AND search_id = ?",
+            (chat_id, search_id),
+        ).fetchone()
+        return _row_to_user_search(row) if row else None
+
     def list_searches(self, chat_id: int) -> list[UserSearch]:
         rows = self._conn.execute(
             f"SELECT {_SEARCH_COLUMNS} FROM user_searches WHERE chat_id = ? ORDER BY created_at",

@@ -81,6 +81,34 @@ def test_add_search_then_get_and_list(tmp_path):
     assert store.list_searches(222) == [found]
 
 
+def test_get_search_by_id_returns_the_search_when_owned(tmp_path):
+    store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
+    store.register(222)
+    search_id = store.add_search(222, "speediance", "https://example.com/s")
+
+    found = store.get_search_by_id(222, search_id)
+
+    assert found is not None
+    assert found.search_id == search_id
+    assert found.name == "speediance"
+
+
+def test_get_search_by_id_returns_none_for_a_different_owner(tmp_path):
+    store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
+    store.register(222)
+    store.register(333)
+    search_id = store.add_search(222, "speediance", "https://example.com/s")
+
+    assert store.get_search_by_id(333, search_id) is None
+
+
+def test_get_search_by_id_returns_none_for_an_unknown_id(tmp_path):
+    store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
+    store.register(222)
+
+    assert store.get_search_by_id(222, 999999) is None
+
+
 def test_add_search_rejects_duplicate_name_for_same_user(tmp_path):
     store = SubscriptionStore(str(tmp_path / "t.sqlite3"))
     store.register(222)
