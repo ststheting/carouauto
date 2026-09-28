@@ -53,7 +53,9 @@ def _panel_result(chat_id: int, search_id: int, ctx: BotContext) -> CallbackResu
     sub = ctx.subscriptions.get_search_by_id(chat_id, search_id)
     if sub is None:
         return _stale_search_result()
-    return CallbackResult(text=ui.search_panel_text(sub), reply_markup=ui.search_panel_keyboard(sub))
+    return CallbackResult(
+        text=ui.search_panel_text(sub, ctx.states.get(sub.url)), reply_markup=ui.search_panel_keyboard(sub)
+    )
 
 
 def _card_keyboard_with_updated_bumped_label(existing_markup: dict, search_id: int, hide_bumped: bool) -> dict:
@@ -120,7 +122,7 @@ async def dispatch_callback(
                 kind="setprice", search_id=sub.search_id, created_at=datetime.now(timezone.utc)
             )
             return CallbackResult(
-                text=ui.search_panel_text(sub),
+                text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
                 reply_markup=ui.search_panel_keyboard(sub),
                 force_reply_prompt=f"Reply with min and max for '{sub.name}', e.g. `100 500`, or `none`.",
             )
@@ -133,7 +135,7 @@ async def dispatch_callback(
                 kind="setexclude", search_id=sub.search_id, created_at=datetime.now(timezone.utc)
             )
             return CallbackResult(
-                text=ui.search_panel_text(sub),
+                text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
                 reply_markup=ui.search_panel_keyboard(sub),
                 force_reply_prompt=f"Reply with words to exclude for '{sub.name}', comma-separated, or `none`.",
             )

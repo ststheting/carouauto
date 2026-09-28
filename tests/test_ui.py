@@ -1,4 +1,7 @@
+from datetime import datetime, timezone
+
 from carouauto import ui
+from carouauto.scheduler import SearchState
 from carouauto.subscriptions import UserSearch
 
 
@@ -77,9 +80,49 @@ def test_condition_keyboard_has_one_button_per_condition_plus_any():
 
     flat = [b for row in markup["inline_keyboard"] for b in row]
     assert [b["text"] for b in flat[:-2]] == list(ui.CONDITIONS)
-    assert flat[-2]["text"] == "Any"
+    assert flat[-2]["text"] == "✓ Any"
     assert flat[-2]["callback_data"] == "cds:3:5"
     assert flat[-1]["callback_data"] == "sp:3"  # back to panel
+
+
+def test_status_line_paused_by_user():
+    assert ui.status_line(make_sub(paused=True), None) == "paused (by you)"
+
+
+def test_status_line_cloudflare_pause():
+    assert ui.status_line(make_sub(), SearchState(paused=True)) == (
+        "paused (Cloudflare challenge, awaiting manual solve)"
+    )
+
+
+def test_status_line_last_checked_in_singapore_time():
+    state = SearchState(last_polled_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+    assert ui.status_line(make_sub(), state) == "last checked 20:00 SGT"
+
+
+def test_status_line_not_yet_checked():
+    assert ui.status_line(make_sub(), None) == "not yet checked"
+    assert ui.status_line(make_sub(), SearchState()) == "not yet checked"
+
+
+def test_search_panel_text_includes_the_status_line():
+    state = SearchState(last_polled_at=datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc))
+    text = ui.search_panel_text(make_sub(name="speediance"), state)
+    assert "Status: last checked 20:00 SGT" in text
+
+
+def test_search_panel_keyboard_has_a_current_listings_button():
+    markup = ui.search_panel_keyboard(make_sub(search_id=7))
+    flat = {b["callback_data"]: b["text"] for row in markup["inline_keyboard"] for b in row}
+    assert flat["li:7"] == "👀 Current listings"
+
+
+def test_condition_keyboard_marks_the_active_condition():
+    markup = ui.condition_keyboard(make_sub(search_id=3, condition_filter="Like new"))
+    texts = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert "✓ Like new" in texts
+    assert "Brand new" in texts
+    assert "Any" in texts
 
 
 def test_remove_confirm_keyboard_has_yes_and_no():

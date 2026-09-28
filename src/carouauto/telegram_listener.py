@@ -188,7 +188,11 @@ async def _apply_pending_reply(pending: PendingInput, text: str, chat_id: int, c
 
     del ctx.pending[chat_id]
     updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
-    ctx.notifier.send_text(chat_id, ui.search_panel_text(updated), reply_markup=ui.search_panel_keyboard(updated))
+    ctx.notifier.send_text(
+        chat_id,
+        ui.search_panel_text(updated, ctx.states.get(updated.url)),
+        reply_markup=ui.search_panel_keyboard(updated),
+    )
 
 
 async def _apply_pending_add_price(pending: PendingInput, text: str, chat_id: int, ctx: BotContext) -> None:

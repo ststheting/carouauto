@@ -89,7 +89,7 @@ async def test_tg_pa_toggles_pause_and_re_renders_the_panel(tmp_path):
     result = await dispatch_callback(f"tg:{search_id}:pa", 111, ctx)
 
     assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
-    assert "resume" in result.text.lower() or "▶" in result.text
+    assert "paused" in result.text.lower()
     flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
     assert any(b["callback_data"] == f"tg:{search_id}:pa" for b in flat)
 

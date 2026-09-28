@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 from urllib.parse import quote
-from zoneinfo import ZoneInfo
 
 from .bump import FRESH_WINDOW_DAYS
 from .challenge import is_challenge_page
@@ -23,10 +22,6 @@ from . import ui
 FetchHtmlFn = Callable[[str], Awaitable[str]]
 
 logger = logging.getLogger("carouauto")
-
-# Displayed times (e.g. /status's "last checked") are shown in the user's
-# local time rather than UTC, since that's what they actually read.
-DISPLAY_TIMEZONE = ZoneInfo("Asia/Singapore")
 
 
 @dataclass
@@ -297,17 +292,7 @@ async def handle_status(args: list[str], chat_id: int, ctx: BotContext) -> str:
     minutes = round(ctx.poll_interval_seconds / 60)
     lines = [f"Poll interval: ~{minutes} minutes", ""]
     for sub in subs:
-        state = ctx.states.get(sub.url)
-        if sub.paused:
-            status_text = "paused (by you)"
-        elif state and state.paused:
-            status_text = "paused (Cloudflare challenge, awaiting manual solve)"
-        elif state and state.last_polled_at:
-            local_time = state.last_polled_at.astimezone(DISPLAY_TIMEZONE)
-            status_text = f"last checked {local_time.strftime('%H:%M')} SGT"
-        else:
-            status_text = "not yet checked"
-        lines.append(f"{sub.name}: {status_text}")
+        lines.append(f"{sub.name}: {ui.status_line(sub, ctx.states.get(sub.url))}")
     return "\n".join(lines)
 
 
