@@ -132,3 +132,77 @@ def test_remove_confirm_keyboard_has_yes_and_no():
     by_data = {b["callback_data"]: b["text"] for b in flat}
     assert by_data["rmy:9"] == "Yes, remove it"
     assert by_data["rmn:9"] == "Cancel"
+
+
+def test_search_picker_keyboard_uses_the_verb_and_search_id():
+    subs = [make_sub(search_id=1, name="speediance"), make_sub(search_id=2, name="switch")]
+
+    markup = ui.search_picker_keyboard(subs, "pa")
+
+    buttons = [row[0] for row in markup["inline_keyboard"]]
+    assert [(b["text"], b["callback_data"]) for b in buttons] == [("speediance", "pa:1"), ("switch", "pa:2")]
+
+
+def test_search_picker_keyboard_handles_long_emoji_names():
+    sub = make_sub(search_id=987654321, name="nintendo switch 🎮 " * 10)
+
+    markup = ui.search_picker_keyboard([sub], "pa")
+
+    data = markup["inline_keyboard"][0][0]["callback_data"]
+    assert data == "pa:987654321"
+    assert len(data.encode()) <= ui.MAX_CALLBACK_DATA_BYTES
+
+
+def test_undo_keyboard_points_at_the_opposite_verb():
+    markup = ui.undo_keyboard("re", 4)
+    assert markup["inline_keyboard"] == [[{"text": "↩️ Undo", "callback_data": "re:4"}]]
+
+
+def test_back_to_search_keyboard_opens_the_panel():
+    markup = ui.back_to_search_keyboard(4)
+    assert markup["inline_keyboard"][0][0]["callback_data"] == "sp:4"
+
+
+def test_prompts_name_the_search():
+    assert "'speediance'" in ui.price_prompt("speediance")
+    assert "none" in ui.price_prompt("speediance")
+    assert "'speediance'" in ui.exclude_prompt("speediance")
+
+
+def test_bottom_keyboard_shape_and_labels():
+    markup = ui.bottom_keyboard()
+
+    assert markup["is_persistent"] is True
+    assert markup["resize_keyboard"] is True
+    labels = [b["text"] for row in markup["keyboard"] for b in row]
+    assert labels == ["🔎 My searches", "➕ Add search", "📊 Status", "❓ Help"]
+    assert list(ui.MENU_BUTTONS) == labels
+    assert ui.MENU_BUTTONS == {
+        "🔎 My searches": "searches",
+        "➕ Add search": "add",
+        "📊 Status": "status",
+        "❓ Help": "help",
+    }
+
+
+def test_notification_card_keyboard_has_manage_and_mute_buttons():
+    markup = ui.notification_card_keyboard(9, "https://www.carousell.sg/p/x-1/", hide_bumped=True)
+
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert flat[0] == {"text": "Open listing", "url": "https://www.carousell.sg/p/x-1/"}
+    by_data = {b["callback_data"]: b["text"] for b in flat if "callback_data" in b}
+    assert by_data["cmt:9"] == "🔇 Mute this search"
+    assert by_data["cbb:9"] == "👁 Show bumped"
+    assert by_data["ms:9"] == "⚙️ Manage search"
+
+
+def test_notification_card_keyboard_unmute_label_when_paused():
+    markup = ui.notification_card_keyboard(9, "https://x", hide_bumped=True, paused=True)
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert any(b.get("callback_data") == "cmt:9" and b["text"] == "🔔 Unmute" for b in flat)
+
+
+def test_notification_card_keyboard_omits_open_row_without_a_url():
+    markup = ui.notification_card_keyboard(9, "", hide_bumped=True)
+    flat = [b for row in markup["inline_keyboard"] for b in row]
+    assert all("url" not in b for b in flat)

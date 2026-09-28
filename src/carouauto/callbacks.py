@@ -59,12 +59,12 @@ def _panel_result(chat_id: int, search_id: int, ctx: BotContext) -> CallbackResu
 
 
 def _card_keyboard_with_updated_bumped_label(existing_markup: dict, search_id: int, hide_bumped: bool) -> dict:
-    bumped_label = "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
+    bumped = ui.bumped_label(hide_bumped)
     rows = [[dict(button) for button in row] for row in existing_markup["inline_keyboard"]]
     for row in rows:
         for button in row:
             if button.get("callback_data") == f"cbb:{search_id}":
-                button["text"] = bumped_label
+                button["text"] = bumped
     return {"inline_keyboard": rows}
 
 
@@ -124,7 +124,7 @@ async def dispatch_callback(
             return CallbackResult(
                 text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
                 reply_markup=ui.search_panel_keyboard(sub),
-                force_reply_prompt=f"Reply with min and max for '{sub.name}', e.g. `100 500`, or `none`.",
+                force_reply_prompt=ui.price_prompt(sub.name),
             )
 
         if verb == "px":
@@ -137,7 +137,7 @@ async def dispatch_callback(
             return CallbackResult(
                 text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
                 reply_markup=ui.search_panel_keyboard(sub),
-                force_reply_prompt=f"Reply with words to exclude for '{sub.name}', comma-separated, or `none`.",
+                force_reply_prompt=ui.exclude_prompt(sub.name),
             )
 
         if verb == "rm":

@@ -26,6 +26,22 @@ def status_line(sub: UserSearch, state: SearchState | None) -> str:
     return "not yet checked"
 
 
+def bumped_label(hide_bumped: bool) -> str:
+    return "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
+
+
+def mute_label(paused: bool) -> str:
+    return "🔔 Unmute" if paused else "🔇 Mute this search"
+
+
+def price_prompt(name: str) -> str:
+    return f"Reply with min and max for '{name}', e.g. `100 500`, or `none`."
+
+
+def exclude_prompt(name: str) -> str:
+    return f"Reply with words to exclude for '{name}', comma-separated, or `none`."
+
+
 def inline_keyboard(rows: list[list[tuple[str, str]]]) -> dict:
     for row in rows:
         for text, callback_data in row:
@@ -60,11 +76,11 @@ def search_panel_text(sub: UserSearch, state: SearchState | None = None) -> str:
 
 def search_panel_keyboard(sub: UserSearch) -> dict:
     pause_label = "▶️ Resume" if sub.paused else "⏸ Pause"
-    bumped_label = "👁 Show bumped" if sub.hide_bumped else "🙈 Hide bumped"
+    hide_label = bumped_label(sub.hide_bumped)
     condition_label = f"Condition: {sub.condition_filter}" if sub.condition_filter else "Condition: Any"
     return inline_keyboard(
         [
-            [(pause_label, f"tg:{sub.search_id}:pa"), (bumped_label, f"tg:{sub.search_id}:hb")],
+            [(pause_label, f"tg:{sub.search_id}:pa"), (hide_label, f"tg:{sub.search_id}:hb")],
             [(condition_label, f"cd:{sub.search_id}")],
             [("💰 Set price", f"pp:{sub.search_id}"), ("🚫 Exclude words", f"px:{sub.search_id}")],
             [("👀 Current listings", f"li:{sub.search_id}")],
@@ -104,6 +120,40 @@ def add_flow_keyboard() -> dict:
     )
 
 
+def search_picker_keyboard(subs: list[UserSearch], verb: str) -> dict:
+    return inline_keyboard([[(sub.name, f"{verb}:{sub.search_id}")] for sub in subs])
+
+
+def undo_keyboard(undo_verb: str, search_id: int) -> dict:
+    return inline_keyboard([[("↩️ Undo", f"{undo_verb}:{search_id}")]])
+
+
+def back_to_search_keyboard(search_id: int) -> dict:
+    return inline_keyboard([[("⬅️ Back to search", f"sp:{search_id}")]])
+
+
+# Persistent reply-keyboard buttons. A tap arrives as a plain text message
+# with exactly this label; the listener maps it to the command via this dict.
+MENU_BUTTONS = {
+    "🔎 My searches": "searches",
+    "➕ Add search": "add",
+    "📊 Status": "status",
+    "❓ Help": "help",
+}
+
+
+def bottom_keyboard() -> dict:
+    labels = list(MENU_BUTTONS)
+    return {
+        "keyboard": [
+            [{"text": labels[0]}, {"text": labels[1]}],
+            [{"text": labels[2]}, {"text": labels[3]}],
+        ],
+        "is_persistent": True,
+        "resize_keyboard": True,
+    }
+
+
 def main_menu_keyboard() -> dict:
     return inline_keyboard(
         [
@@ -113,14 +163,19 @@ def main_menu_keyboard() -> dict:
     )
 
 
-def notification_card_keyboard(search_id: int, url: str, hide_bumped: bool) -> dict:
-    bumped_label = "👁 Show bumped" if hide_bumped else "🙈 Hide bumped"
-    return {
-        "inline_keyboard": [
-            [{"text": "Open listing", "url": url}],
-            [
-                {"text": "🔇 Mute this search", "callback_data": f"cmt:{search_id}"},
-                {"text": bumped_label, "callback_data": f"cbb:{search_id}"},
-            ],
+def notification_card_keyboard(search_id: int, url: str, hide_bumped: bool, paused: bool = False) -> dict:
+    # Built directly rather than through inline_keyboard(): URL buttons don't
+    # fit its (text, callback_data) tuple shape. An empty url (a rebuilt
+    # keyboard with no listing to point at) omits the row — Telegram rejects
+    # a URL button with an empty url.
+    rows = []
+    if url:
+        rows.append([{"text": "Open listing", "url": url}])
+    rows.append(
+        [
+            {"text": mute_label(paused), "callback_data": f"cmt:{search_id}"},
+            {"text": bumped_label(hide_bumped), "callback_data": f"cbb:{search_id}"},
         ]
-    }
+    )
+    rows.append([{"text": "⚙️ Manage search", "callback_data": f"ms:{search_id}"}])
+    return {"inline_keyboard": rows}
