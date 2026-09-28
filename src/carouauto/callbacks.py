@@ -6,7 +6,15 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
 from . import ui
-from .commands import BotContext, PendingInput, _build_carousell_search_url, _finish_add, _is_url, handle_status
+from .commands import (
+    BotContext,
+    PendingInput,
+    _build_carousell_search_url,
+    _finish_add,
+    _is_url,
+    current_listings_text,
+    handle_status,
+)
 
 logger = logging.getLogger("carouauto")
 
@@ -65,14 +73,25 @@ def _panel_result(chat_id: int, search_id: int, ctx: BotContext) -> CallbackResu
     )
 
 
-def _card_keyboard_with_updated_bumped_label(existing_markup: dict, search_id: int, hide_bumped: bool) -> dict:
-    bumped = ui.bumped_label(hide_bumped)
+def _relabel_button(existing_markup: dict, callback_data: str, new_text: str) -> dict:
+    # Copies every button so the caller's dict (parsed from the incoming
+    # update) is never mutated, and keeps URL buttons exactly as they were.
     rows = [[dict(button) for button in row] for row in existing_markup["inline_keyboard"]]
     for row in rows:
         for button in row:
-            if button.get("callback_data") == f"cbb:{search_id}":
-                button["text"] = bumped
+            if button.get("callback_data") == callback_data:
+                button["text"] = new_text
     return {"inline_keyboard": rows}
+
+
+# Explicit setters used by the pickers: tap "pa" always pauses (never
+# toggles), and the Undo button points at the opposite verb.
+_STATE_VERBS = {
+    "pa": ("paused", True, "Paused '{name}'.", "re"),
+    "re": ("paused", False, "Resumed '{name}'.", "pa"),
+    "hb": ("hide_bumped", True, "Hiding bumped listings for '{name}'.", "sb"),
+    "sb": ("hide_bumped", False, "Showing bumped listings for '{name}' again.", "hb"),
+}
 
 
 async def dispatch_callback(
@@ -168,6 +187,50 @@ async def dispatch_callback(
         if verb == "rmn":
             return _panel_result(chat_id, int(parts[1]), ctx)
 
+        if verb in _STATE_VERBS:
+            field_name, value, message, undo_verb = _STATE_VERBS[verb]
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            if field_name == "paused":
+                ctx.subscriptions.set_paused(chat_id, sub.name, value)
+            else:
+                ctx.subscriptions.set_hide_bumped(chat_id, sub.name, value)
+            return CallbackResult(
+                text=message.format(name=sub.name),
+                reply_markup=ui.undo_keyboard(undo_verb, sub.search_id),
+            )
+
+        if verb == "li":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+
+            async def send_listings() -> None:
+                try:
+                    text = await current_listings_text(sub, ctx)
+                except Exception as exc:
+                    logger.error("listing fetch failed for search_id=%s: %s", sub.search_id, type(exc).__name__)
+                    text = f"Couldn't fetch listings for '{sub.name}' right now — try again shortly."
+                ctx.notifier.send_text(chat_id, text)
+
+            return CallbackResult(
+                text=f"Fetching current listings for '{sub.name}' — they'll arrive as a new message.",
+                reply_markup=ui.back_to_search_keyboard(sub.search_id),
+                toast="Fetching…",
+                followup=send_listings,
+            )
+
+        if verb == "ms":
+            sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
+            if sub is None:
+                return _stale_search_result()
+            return CallbackResult(
+                text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
+                reply_markup=ui.search_panel_keyboard(sub),
+                send_as_new=True,
+            )
+
         if verb == "afy":
             pending = ctx.pending.get(chat_id)
             if pending is None or pending.kind not in ("add_query", "add_price") or not pending.query:
@@ -199,9 +262,14 @@ async def dispatch_callback(
             sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
             if sub is None:
                 return _stale_search_result()
-            ctx.subscriptions.set_paused(chat_id, sub.name, True)
-            markup = current_markup or ui.notification_card_keyboard(sub.search_id, "", sub.hide_bumped)
-            return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast=f"Muted '{sub.name}'.")
+            now_paused = not sub.paused
+            ctx.subscriptions.set_paused(chat_id, sub.name, now_paused)
+            if current_markup is None:
+                markup = ui.notification_card_keyboard(sub.search_id, "", sub.hide_bumped, now_paused)
+            else:
+                markup = _relabel_button(current_markup, f"cmt:{sub.search_id}", ui.mute_label(now_paused))
+            toast = f"Muted '{sub.name}'." if now_paused else f"Unmuted '{sub.name}'."
+            return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast=toast)
 
         if verb == "cbb":
             sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
@@ -210,9 +278,9 @@ async def dispatch_callback(
             ctx.subscriptions.set_hide_bumped(chat_id, sub.name, not sub.hide_bumped)
             updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
             if current_markup is None:
-                markup = ui.notification_card_keyboard(updated.search_id, "", updated.hide_bumped)
+                markup = ui.notification_card_keyboard(updated.search_id, "", updated.hide_bumped, updated.paused)
             else:
-                markup = _card_keyboard_with_updated_bumped_label(current_markup, updated.search_id, updated.hide_bumped)
+                markup = _relabel_button(current_markup, f"cbb:{updated.search_id}", ui.bumped_label(updated.hide_bumped))
             return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast="Updated.")
 
         if verb == "mm":

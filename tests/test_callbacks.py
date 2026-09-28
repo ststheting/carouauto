@@ -352,3 +352,159 @@ async def test_mm_he_shows_help_text(tmp_path):
     result = await dispatch_callback("mm:he", 111, ctx)
 
     assert "/register" in result.text
+
+
+class RecordingNotifier:
+    def __init__(self):
+        self.sent = []
+
+    def send_text(self, chat_id, text, reply_markup=None):
+        self.sent.append((chat_id, text, reply_markup))
+
+
+LISTING_HTML = """
+<div data-testid="listing-card-1">
+  <a href="/u/seller1/"><p data-testid="listing-card-text-seller-name">seller1</p><div><p>2 minutes ago</p></div></a>
+  <a href="/p/item-one-1/"><img alt="Item One" src="https://example.com/1.jpg"/><p>Item One</p><div><p title="S$10">S$10</p></div><p>Brand new</p></a>
+</div>
+"""
+
+
+def _registered_ctx_with_search(tmp_path, name="speediance"):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, name, "https://example.com/s")
+    return ctx, search_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "verb, field, start, expected, undo",
+    [
+        ("pa", "paused", False, True, "re"),
+        ("re", "paused", True, False, "pa"),
+        ("hb", "hide_bumped", False, True, "sb"),
+        ("sb", "hide_bumped", True, False, "hb"),
+    ],
+)
+async def test_state_verbs_set_explicitly_and_offer_undo(tmp_path, verb, field, start, expected, undo):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    if field == "paused":
+        ctx.subscriptions.set_paused(111, "speediance", start)
+    else:
+        ctx.subscriptions.set_hide_bumped(111, "speediance", start)
+
+    result = await dispatch_callback(f"{verb}:{search_id}", 111, ctx)
+
+    assert getattr(ctx.subscriptions.get_search_by_id(111, search_id), field) is expected
+    assert "speediance" in result.text
+    assert result.reply_markup["inline_keyboard"] == [[{"text": "↩️ Undo", "callback_data": f"{undo}:{search_id}"}]]
+
+
+@pytest.mark.asyncio
+async def test_pa_is_idempotent_not_a_toggle(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+
+    await dispatch_callback(f"pa:{search_id}", 111, ctx)
+    await dispatch_callback(f"pa:{search_id}", 111, ctx)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verb", ["pa", "re", "hb", "sb", "li", "ms"])
+async def test_new_verbs_reject_another_users_search(tmp_path, verb):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.register(222)
+    search_id = ctx.subscriptions.add_search(222, "theirs", "https://example.com/s")
+
+    result = await dispatch_callback(f"{verb}:{search_id}", 111, ctx)
+
+    assert "no longer exists" in result.text.lower()
+    assert result.followup is None
+    assert ctx.subscriptions.get_search_by_id(222, search_id).paused is False
+
+
+@pytest.mark.asyncio
+async def test_li_answers_fast_and_sends_listings_in_the_followup(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    ctx.notifier = RecordingNotifier()
+
+    async def fetch_html(url):
+        return LISTING_HTML
+
+    ctx.fetch_html = fetch_html
+
+    result = await dispatch_callback(f"li:{search_id}", 111, ctx)
+
+    assert "fetching" in result.text.lower()
+    assert result.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"sp:{search_id}"
+    assert ctx.notifier.sent == []  # nothing sent until the followup runs
+    await result.followup()
+    assert "Item One" in ctx.notifier.sent[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_li_followup_reports_a_fetch_failure(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    ctx.notifier = RecordingNotifier()
+
+    async def fetch_html(url):
+        raise RuntimeError("browser died")
+
+    ctx.fetch_html = fetch_html
+
+    result = await dispatch_callback(f"li:{search_id}", 111, ctx)
+    await result.followup()  # must not raise
+
+    assert "couldn't fetch listings for 'speediance'" in ctx.notifier.sent[-1][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_ms_sends_the_panel_as_a_new_message(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+
+    result = await dispatch_callback(f"ms:{search_id}", 111, ctx)
+
+    assert result.send_as_new is True
+    assert "speediance" in result.text
+    flat = [b["callback_data"] for row in result.reply_markup["inline_keyboard"] for b in row]
+    assert f"tg:{search_id}:pa" in flat
+
+
+@pytest.mark.asyncio
+async def test_cmt_toggles_mute_and_relabels_without_dropping_the_url(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    card = {
+        "inline_keyboard": [
+            [{"text": "Open listing", "url": "https://www.carousell.sg/p/x-1/"}],
+            [
+                {"text": "🔇 Mute this search", "callback_data": f"cmt:{search_id}"},
+                {"text": "👁 Show bumped", "callback_data": f"cbb:{search_id}"},
+            ],
+            [{"text": "⚙️ Manage search", "callback_data": f"ms:{search_id}"}],
+        ]
+    }
+
+    muted = await dispatch_callback(f"cmt:{search_id}", 111, ctx, card)
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
+    assert muted.toast == "Muted 'speediance'."
+    assert muted.reply_markup["inline_keyboard"][0][0]["url"] == "https://www.carousell.sg/p/x-1/"
+    assert muted.reply_markup["inline_keyboard"][1][0]["text"] == "🔔 Unmute"
+    assert card["inline_keyboard"][1][0]["text"] == "🔇 Mute this search"  # caller's dict untouched
+
+    unmuted = await dispatch_callback(f"cmt:{search_id}", 111, ctx, muted.reply_markup)
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is False
+    assert unmuted.toast == "Unmuted 'speediance'."
+    assert unmuted.reply_markup["inline_keyboard"][1][0]["text"] == "🔇 Mute this search"
+
+
+@pytest.mark.asyncio
+async def test_cmt_without_current_markup_builds_a_keyboard_with_no_empty_url(tmp_path):
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+
+    result = await dispatch_callback(f"cmt:{search_id}", 111, ctx)
+
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    assert all("url" not in b for b in flat)

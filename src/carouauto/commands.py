@@ -16,7 +16,7 @@ from .db import SeenStore
 from .notifier import TelegramNotifier, format_message
 from .parser import parse_listings
 from .scheduler import SearchState
-from .subscriptions import SubscriptionStore
+from .subscriptions import SubscriptionStore, UserSearch
 from . import ui
 
 FetchHtmlFn = Callable[[str], Awaitable[str]]
@@ -296,6 +296,20 @@ async def handle_status(args: list[str], chat_id: int, ctx: BotContext) -> str:
     return "\n".join(lines)
 
 
+async def current_listings_text(sub: UserSearch, ctx: BotContext) -> str:
+    html = await ctx.fetch_html(sub.url)
+    if is_challenge_page(html):
+        return "Carousell is showing a Cloudflare challenge right now — try again shortly."
+    listings = parse_listings(html)
+    if not listings:
+        return f"No listings currently found for '{sub.name}'."
+    lines = [f"Current listings for '{sub.name}' (showing up to {LIST_CAP}):", ""]
+    for listing in listings[:LIST_CAP]:
+        lines.append(format_message(listing))
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 async def handle_list(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) != 1:
         return "Usage: /list <name>"
@@ -303,17 +317,7 @@ async def handle_list(args: list[str], chat_id: int, ctx: BotContext) -> str:
     sub = ctx.subscriptions.get_search(chat_id, name)
     if sub is None:
         return f"No search named '{name}'. Use /searches to see your tracked searches."
-    html = await ctx.fetch_html(sub.url)
-    if is_challenge_page(html):
-        return "Carousell is showing a Cloudflare challenge right now — try again shortly."
-    listings = parse_listings(html)
-    if not listings:
-        return f"No listings currently found for '{name}'."
-    lines = [f"Current listings for '{name}' (showing up to {LIST_CAP}):", ""]
-    for listing in listings[:LIST_CAP]:
-        lines.append(format_message(listing))
-        lines.append("")
-    return "\n".join(lines).strip()
+    return await current_listings_text(sub, ctx)
 
 
 async def handle_revoke(args: list[str], chat_id: int, ctx: BotContext) -> str:
