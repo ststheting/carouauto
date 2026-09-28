@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from carouauto import ui
 from carouauto.commands import BotContext, PendingInput
 from carouauto.callbacks import CallbackResult, dispatch_callback
 from carouauto.db import SeenStore
@@ -295,6 +296,7 @@ async def test_cmt_on_a_stale_search_does_not_raise(tmp_path):
     result = await dispatch_callback("cmt:999999", 111, ctx)
 
     assert "no longer exists" in result.text.lower()
+    assert result.send_as_new is True
 
 
 @pytest.mark.asyncio
@@ -414,7 +416,7 @@ async def test_pa_is_idempotent_not_a_toggle(tmp_path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verb", ["pa", "re", "hb", "sb", "li", "ms"])
+@pytest.mark.parametrize("verb", ["pa", "re", "hb", "sb", "li", "ms", "cmt", "cbb"])
 async def test_new_verbs_reject_another_users_search(tmp_path, verb):
     ctx = make_ctx(tmp_path)
     ctx.subscriptions.register(111)
@@ -426,6 +428,11 @@ async def test_new_verbs_reject_another_users_search(tmp_path, verb):
     assert "no longer exists" in result.text.lower()
     assert result.followup is None
     assert ctx.subscriptions.get_search_by_id(222, search_id).paused is False
+    if verb in ("ms", "cmt", "cbb"):
+        assert result.send_as_new is True
+        assert result.text == "This search no longer exists."
+    else:
+        assert result.send_as_new is False
 
 
 @pytest.mark.asyncio
@@ -510,3 +517,52 @@ async def test_cmt_without_current_markup_builds_a_keyboard_with_no_empty_url(tm
 
     flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
     assert all("url" not in b for b in flat)
+
+
+@pytest.mark.asyncio
+async def test_cmt_on_a_legacy_card_reads_the_tapped_label_not_a_blind_flip(tmp_path):
+    # Search is already paused; the card was sent before this deploy and
+    # always reads the old "Mute this search" label regardless of state.
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    ctx.subscriptions.set_paused(111, "speediance", True)
+    card = ui.notification_card_keyboard(search_id, "", True, paused=False)
+
+    result = await dispatch_callback(f"cmt:{search_id}", 111, ctx, card)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is True
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    button = next(b for b in flat if b.get("callback_data") == f"cmt:{search_id}")
+    assert button["text"] == "🔔 Unmute"
+    assert result.toast.startswith("Muted")
+
+
+@pytest.mark.asyncio
+async def test_cmt_on_a_stale_unmute_label_does_not_silently_unmute(tmp_path):
+    # Search is not paused; the card's button was built with paused=True
+    # (stale "Unmute" label). Tapping it should not toggle to paused.
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    card = ui.notification_card_keyboard(search_id, "", True, paused=True)
+
+    result = await dispatch_callback(f"cmt:{search_id}", 111, ctx, card)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).paused is False
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    button = next(b for b in flat if b.get("callback_data") == f"cmt:{search_id}")
+    assert button["text"] == "🔇 Mute this search"
+    assert result.toast.startswith("Unmuted")
+
+
+@pytest.mark.asyncio
+async def test_cbb_on_a_stale_bumped_label_does_not_flip_state(tmp_path):
+    # Search has hide_bumped=False; the card's button was built with
+    # hide_bumped=True (stale "Show bumped" label).
+    ctx, search_id = _registered_ctx_with_search(tmp_path)
+    ctx.subscriptions.set_hide_bumped(111, "speediance", False)
+    card = ui.notification_card_keyboard(search_id, "", True, paused=False)
+
+    result = await dispatch_callback(f"cbb:{search_id}", 111, ctx, card)
+
+    assert ctx.subscriptions.get_search_by_id(111, search_id).hide_bumped is False
+    flat = [b for row in result.reply_markup["inline_keyboard"] for b in row]
+    button = next(b for b in flat if b.get("callback_data") == f"cbb:{search_id}")
+    assert button["text"] == ui.bumped_label(False)

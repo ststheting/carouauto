@@ -53,6 +53,19 @@ def _stale_search_result() -> CallbackResult:
     )
 
 
+def _stale_card_result() -> CallbackResult:
+    # Same message as _stale_search_result(), but delivered as a new message:
+    # the listener edits in place via editMessageText for the plain variant,
+    # which on a text notification card would wipe out the listing text and
+    # its Open-listing button.
+    return CallbackResult(
+        text="This search no longer exists.",
+        reply_markup=None,
+        toast="Search not found",
+        send_as_new=True,
+    )
+
+
 def _searches_list_result(chat_id: int, ctx: BotContext) -> CallbackResult:
     subs = ctx.subscriptions.list_searches(chat_id)
     if not subs:
@@ -82,6 +95,14 @@ def _relabel_button(existing_markup: dict, callback_data: str, new_text: str) ->
             if button.get("callback_data") == callback_data:
                 button["text"] = new_text
     return {"inline_keyboard": rows}
+
+
+def _button_text(markup: dict, callback_data: str) -> str | None:
+    for row in markup["inline_keyboard"]:
+        for button in row:
+            if button.get("callback_data") == callback_data:
+                return button.get("text")
+    return None
 
 
 # Explicit setters used by the pickers: tap "pa" always pauses (never
@@ -224,7 +245,7 @@ async def dispatch_callback(
         if verb == "ms":
             sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
             if sub is None:
-                return _stale_search_result()
+                return _stale_card_result()
             return CallbackResult(
                 text=ui.search_panel_text(sub, ctx.states.get(sub.url)),
                 reply_markup=ui.search_panel_keyboard(sub),
@@ -261,26 +282,33 @@ async def dispatch_callback(
         if verb == "cmt":
             sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
             if sub is None:
-                return _stale_search_result()
-            now_paused = not sub.paused
-            ctx.subscriptions.set_paused(chat_id, sub.name, now_paused)
+                return _stale_card_result()
             if current_markup is None:
-                markup = ui.notification_card_keyboard(sub.search_id, "", sub.hide_bumped, now_paused)
+                target_paused = not sub.paused
+                markup = ui.notification_card_keyboard(sub.search_id, "", sub.hide_bumped, target_paused)
             else:
-                markup = _relabel_button(current_markup, f"cmt:{sub.search_id}", ui.mute_label(now_paused))
-            toast = f"Muted '{sub.name}'." if now_paused else f"Unmuted '{sub.name}'."
+                # The tapped button's own label is the source of truth, not sub.paused:
+                # a card sent before a deploy, or updated elsewhere (panel, /pause,
+                # another card) since it was sent, can show a stale label.
+                current_label = _button_text(current_markup, f"cmt:{sub.search_id}")
+                target_paused = False if current_label == ui.mute_label(True) else True
+                markup = _relabel_button(current_markup, f"cmt:{sub.search_id}", ui.mute_label(target_paused))
+            ctx.subscriptions.set_paused(chat_id, sub.name, target_paused)
+            toast = f"Muted '{sub.name}'." if target_paused else f"Unmuted '{sub.name}'."
             return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast=toast)
 
         if verb == "cbb":
             sub = ctx.subscriptions.get_search_by_id(chat_id, int(parts[1]))
             if sub is None:
-                return _stale_search_result()
-            ctx.subscriptions.set_hide_bumped(chat_id, sub.name, not sub.hide_bumped)
-            updated = ctx.subscriptions.get_search_by_id(chat_id, sub.search_id)
+                return _stale_card_result()
             if current_markup is None:
-                markup = ui.notification_card_keyboard(updated.search_id, "", updated.hide_bumped, updated.paused)
+                target_hide_bumped = not sub.hide_bumped
+                markup = ui.notification_card_keyboard(sub.search_id, "", target_hide_bumped, sub.paused)
             else:
-                markup = _relabel_button(current_markup, f"cbb:{updated.search_id}", ui.bumped_label(updated.hide_bumped))
+                current_label = _button_text(current_markup, f"cbb:{sub.search_id}")
+                target_hide_bumped = False if current_label == ui.bumped_label(True) else True
+                markup = _relabel_button(current_markup, f"cbb:{sub.search_id}", ui.bumped_label(target_hide_bumped))
+            ctx.subscriptions.set_hide_bumped(chat_id, sub.name, target_hide_bumped)
             return CallbackResult(text=CARD_TEXT_UNCHANGED, reply_markup=markup, toast="Updated.")
 
         if verb == "mm":
