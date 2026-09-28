@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Awaitable, Callable
 
 from . import ui
 from .commands import BotContext, PendingInput, _build_carousell_search_url, _finish_add, _is_url, handle_status
@@ -24,6 +25,12 @@ class CallbackResult:
     reply_markup: dict | None
     toast: str | None = None
     force_reply_prompt: str | None = None
+    # Deliver as a fresh message instead of editing the tapped one (a photo
+    # card can't be edited into a text panel).
+    send_as_new: bool = False
+    # Slow work the listener awaits after answering the tap, so Telegram
+    # never reports the callback query as too old.
+    followup: Callable[[], Awaitable[None]] | None = None
 
 
 def _not_registered_result() -> CallbackResult:

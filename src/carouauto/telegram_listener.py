@@ -120,7 +120,9 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
         callback_query_id = callback["id"]
         result = await dispatch_callback(data, chat_id, ctx, callback["message"].get("reply_markup"))
         try:
-            if result.text == CARD_TEXT_UNCHANGED:
+            if result.send_as_new:
+                ctx.notifier.send_text(chat_id, result.text, result.reply_markup)
+            elif result.text == CARD_TEXT_UNCHANGED:
                 # A notification card's text/caption must stay exactly as it
                 # was — editMessageReplyMarkup updates only the keyboard and
                 # works the same whether the underlying message is text or a
@@ -129,13 +131,13 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
             else:
                 ctx.notifier.edit_message(chat_id, message_id, result.text, result.reply_markup)
         except Exception as exc:
-            logger.error("failed to edit message for callback '%s': %s", data, type(exc).__name__)
-            # Spec: a failed edit (other than "not modified", which never
-            # raises) falls back to sending a fresh message — the original
-            # message may be too old to edit, or already deleted. Skip this
-            # for CARD_TEXT_UNCHANGED: there's no real text there, just a
-            # sentinel, so a fresh standalone message would be nonsense.
-            if result.text != CARD_TEXT_UNCHANGED:
+            logger.error("failed to deliver result for callback '%s': %s", data, type(exc).__name__)
+            # Spec: a failed edit falls back to sending a fresh message — the
+            # original may be too old to edit, or deleted. Not for
+            # CARD_TEXT_UNCHANGED (only a sentinel, no real text) and not for
+            # send_as_new (that already was a fresh send; retrying it would
+            # just fail the same way).
+            if not result.send_as_new and result.text != CARD_TEXT_UNCHANGED:
                 try:
                     ctx.notifier.send_text(chat_id, result.text, result.reply_markup)
                 except Exception as exc2:
@@ -154,6 +156,11 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
                 ctx.notifier.send_text(chat_id, result.force_reply_prompt, reply_markup={"force_reply": True})
             except Exception as exc:
                 logger.error("failed to send force-reply prompt for callback '%s': %s", data, type(exc).__name__)
+        if result.followup is not None:
+            try:
+                await result.followup()
+            except Exception as exc:
+                logger.error("followup failed for callback '%s': %s", data, type(exc).__name__)
 
 
 def _parse_two_optional_numbers(text: str) -> tuple[float | None, float | None] | str:

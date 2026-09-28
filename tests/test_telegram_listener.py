@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
+from carouauto.callbacks import CallbackResult
 from carouauto.commands import BotContext, PendingInput
 from carouauto.db import SeenStore
 from carouauto.subscriptions import SubscriptionStore
@@ -58,6 +59,86 @@ def make_ctx(tmp_path):
         db_path=str(tmp_path / "t.sqlite3"),
         poll_interval_seconds=300,
     )
+
+
+def _callback_update(data, chat_id=111, message_id=42):
+    return {
+        "update_id": 9,
+        "callback_query": {
+            "id": "cbq9",
+            "data": data,
+            "message": {"chat": {"id": chat_id}, "message_id": message_id, "text": "old"},
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_as_new_sends_a_fresh_message_instead_of_editing(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+
+    async def fake_dispatch(data, chat_id, ctx, current_markup=None):
+        return CallbackResult(text="panel", reply_markup={"inline_keyboard": []}, send_as_new=True)
+
+    monkeypatch.setattr("carouauto.telegram_listener.dispatch_callback", fake_dispatch)
+
+    await handle_update(_callback_update("ms:1"), ctx)
+
+    assert ctx.notifier.sent == [(111, "panel", {"inline_keyboard": []})]
+    assert ctx.notifier.edits == []
+    assert ctx.notifier.answers == [("cbq9", None)]
+
+
+@pytest.mark.asyncio
+async def test_followup_runs_after_the_callback_is_answered(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    answered_before_followup = []
+
+    async def followup():
+        answered_before_followup.append(len(ctx.notifier.answers))
+        ctx.notifier.send_text(111, "listings")
+
+    async def fake_dispatch(data, chat_id, ctx, current_markup=None):
+        return CallbackResult(text="Fetching…", reply_markup=None, followup=followup)
+
+    monkeypatch.setattr("carouauto.telegram_listener.dispatch_callback", fake_dispatch)
+
+    await handle_update(_callback_update("li:1"), ctx)
+
+    assert answered_before_followup == [1]
+    assert ctx.notifier.sent[-1] == (111, "listings", None)
+
+
+@pytest.mark.asyncio
+async def test_a_raising_followup_is_contained(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+
+    async def followup():
+        raise RuntimeError("browser died")
+
+    async def fake_dispatch(data, chat_id, ctx, current_markup=None):
+        return CallbackResult(text="Fetching…", reply_markup=None, followup=followup)
+
+    monkeypatch.setattr("carouauto.telegram_listener.dispatch_callback", fake_dispatch)
+
+    await handle_update(_callback_update("li:1"), ctx)  # must not raise
+
+    assert ctx.notifier.answers == [("cbq9", None)]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_send_as_new_is_logged_not_retried(tmp_path, monkeypatch):
+    ctx = make_ctx(tmp_path)
+    ctx.notifier.raise_on_send_text = True
+
+    async def fake_dispatch(data, chat_id, ctx, current_markup=None):
+        return CallbackResult(text="panel", reply_markup=None, send_as_new=True)
+
+    monkeypatch.setattr("carouauto.telegram_listener.dispatch_callback", fake_dispatch)
+
+    await handle_update(_callback_update("ms:1"), ctx)  # must not raise
+
+    assert ctx.notifier.edits == []
+    assert ctx.notifier.answers == [("cbq9", None)]
 
 
 @pytest.mark.asyncio
