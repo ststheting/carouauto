@@ -334,7 +334,7 @@ async def test_handle_remove_unknown_search(tmp_path):
 
     reply = await handle_remove(["does-not-exist"], 111, ctx)
 
-    assert "no search" in reply.lower()
+    assert "no tracked searches" in reply.lower()  # nothing to pick from
 
 
 @pytest.mark.asyncio
@@ -471,16 +471,92 @@ async def test_handle_hidebumped_unknown_search(tmp_path):
 
     reply = await handle_hidebumped(["nope"], 111, ctx)
 
-    assert "no search named" in reply.lower()
+    assert "no tracked searches" in reply.lower()
 
 
 @pytest.mark.asyncio
-async def test_handle_showbumped_wrong_arg_count_gives_usage(tmp_path):
+async def test_handle_showbumped_with_no_name_and_no_searches(tmp_path):
     ctx = make_ctx(tmp_path)
 
     reply = await handle_showbumped([], 111, ctx)
 
-    assert "usage" in reply.lower()
+    assert "no tracked searches" in reply.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler_name, verb",
+    [
+        ("handle_remove", "rm"),
+        ("handle_pause", "pa"),
+        ("handle_resume", "re"),
+        ("handle_hidebumped", "hb"),
+        ("handle_showbumped", "sb"),
+        ("handle_list", "li"),
+    ],
+)
+async def test_name_commands_without_a_name_send_a_picker(tmp_path, handler_name, verb):
+    import carouauto.commands as commands_module
+
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+
+    reply = await getattr(commands_module, handler_name)([], 111, ctx)
+
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert text == "Which search?"
+    assert markup["inline_keyboard"] == [[{"text": "speediance", "callback_data": f"{verb}:{search_id}"}]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler_name, verb",
+    [
+        ("handle_remove", "rm"),
+        ("handle_pause", "pa"),
+        ("handle_resume", "re"),
+        ("handle_hidebumped", "hb"),
+        ("handle_showbumped", "sb"),
+        ("handle_list", "li"),
+    ],
+)
+async def test_name_commands_with_an_unknown_name_send_a_picker(tmp_path, handler_name, verb):
+    import carouauto.commands as commands_module
+
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await getattr(commands_module, handler_name)(["nope"], 111, ctx)
+
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert text == "No search named 'nope' — pick one:"
+    assert markup["inline_keyboard"][0][0]["callback_data"].startswith(f"{verb}:")
+
+
+@pytest.mark.asyncio
+async def test_case_mismatched_name_shows_the_picker_and_changes_nothing(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_pause(["Speediance"], 111, ctx)
+
+    assert reply == ""
+    assert ctx.notifier.sent[-1][1] == "No search named 'Speediance' — pick one:"
+    assert ctx.subscriptions.get_search(111, "speediance").paused is False
+
+
+@pytest.mark.asyncio
+async def test_unquoted_multi_word_name_is_joined(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["nintendo switch", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_pause(["nintendo", "switch"], 111, ctx)
+
+    assert reply == "Paused 'nintendo switch'."
+    assert ctx.subscriptions.get_search(111, "nintendo switch").paused is True
 
 
 from datetime import datetime, timezone
@@ -596,7 +672,7 @@ async def test_handle_list_unknown_search(tmp_path):
 
     reply = await handle_list(["does-not-exist"], 111, ctx)
 
-    assert "no search" in reply.lower()
+    assert "no tracked searches" in reply.lower()
 
 
 import sqlite3

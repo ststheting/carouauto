@@ -117,6 +117,7 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         "— on by default for new searches\n"
         "/status — check your searches' last-poll status\n"
         "/list <name> — see what's currently on Carousell for a search right now\n"
+        "Commands that take a <name> show your searches as buttons if you leave it out.\n"
         "/revoke <chat_id> — admin only, remove someone's access\n"
         "/backup — admin only, get a copy of the database\n"
         "/help — this message"
@@ -172,6 +173,15 @@ def _reply_with(chat_id: int, ctx: BotContext, text: str, markup: dict | None) -
     return ""
 
 
+def _send_picker(chat_id: int, ctx: BotContext, verb: str, missing_name: str | None) -> str:
+    subs = ctx.subscriptions.list_searches(chat_id)
+    if not subs:
+        return "You have no tracked searches yet. Use /add <name> to start one."
+    prompt = "Which search?" if missing_name is None else f"No search named '{missing_name}' — pick one:"
+    ctx.notifier.send_text(chat_id, prompt, reply_markup=ui.search_picker_keyboard(subs, verb))
+    return ""
+
+
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 1:
         ctx.pending[chat_id] = PendingInput(
@@ -205,13 +215,14 @@ async def handle_addurl(args: list[str], chat_id: int, ctx: BotContext) -> str:
 
 
 async def handle_remove(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /remove <name>"
-    search_id = ctx.subscriptions.remove_search(chat_id, args[0])
+    if not args:
+        return _send_picker(chat_id, ctx, "rm", None)
+    name = " ".join(args)
+    search_id = ctx.subscriptions.remove_search(chat_id, name)
     if search_id is None:
-        return f"No search named '{args[0]}'."
+        return _send_picker(chat_id, ctx, "rm", name)
     ctx.seen_store.delete_all_for_search(search_id)
-    return f"Removed '{args[0]}'."
+    return f"Removed '{name}'."
 
 
 async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str:
@@ -264,35 +275,39 @@ async def handle_setcondition(args: list[str], chat_id: int, ctx: BotContext) ->
 
 
 async def handle_pause(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /pause <name>"
-    if not ctx.subscriptions.set_paused(chat_id, args[0], True):
-        return f"No search named '{args[0]}'."
-    return f"Paused '{args[0]}'."
+    if not args:
+        return _send_picker(chat_id, ctx, "pa", None)
+    name = " ".join(args)
+    if not ctx.subscriptions.set_paused(chat_id, name, True):
+        return _send_picker(chat_id, ctx, "pa", name)
+    return f"Paused '{name}'."
 
 
 async def handle_resume(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /resume <name>"
-    if not ctx.subscriptions.set_paused(chat_id, args[0], False):
-        return f"No search named '{args[0]}'."
-    return f"Resumed '{args[0]}'."
+    if not args:
+        return _send_picker(chat_id, ctx, "re", None)
+    name = " ".join(args)
+    if not ctx.subscriptions.set_paused(chat_id, name, False):
+        return _send_picker(chat_id, ctx, "re", name)
+    return f"Resumed '{name}'."
 
 
 async def handle_hidebumped(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /hidebumped <name>"
-    if not ctx.subscriptions.set_hide_bumped(chat_id, args[0], True):
-        return f"No search named '{args[0]}'."
-    return f"'{args[0]}' will no longer notify you about bumped (re-surfaced) listings."
+    if not args:
+        return _send_picker(chat_id, ctx, "hb", None)
+    name = " ".join(args)
+    if not ctx.subscriptions.set_hide_bumped(chat_id, name, True):
+        return _send_picker(chat_id, ctx, "hb", name)
+    return f"'{name}' will no longer notify you about bumped (re-surfaced) listings."
 
 
 async def handle_showbumped(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /showbumped <name>"
-    if not ctx.subscriptions.set_hide_bumped(chat_id, args[0], False):
-        return f"No search named '{args[0]}'."
-    return f"'{args[0]}' will notify you about bumped listings again."
+    if not args:
+        return _send_picker(chat_id, ctx, "sb", None)
+    name = " ".join(args)
+    if not ctx.subscriptions.set_hide_bumped(chat_id, name, False):
+        return _send_picker(chat_id, ctx, "sb", name)
+    return f"'{name}' will notify you about bumped listings again."
 
 
 LIST_CAP = 15
@@ -324,12 +339,12 @@ async def current_listings_text(sub: UserSearch, ctx: BotContext) -> str:
 
 
 async def handle_list(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) != 1:
-        return "Usage: /list <name>"
-    name = args[0]
+    if not args:
+        return _send_picker(chat_id, ctx, "li", None)
+    name = " ".join(args)
     sub = ctx.subscriptions.get_search(chat_id, name)
     if sub is None:
-        return f"No search named '{name}'. Use /searches to see your tracked searches."
+        return _send_picker(chat_id, ctx, "li", name)
     return await current_listings_text(sub, ctx)
 
 
