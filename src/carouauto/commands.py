@@ -182,6 +182,13 @@ def _send_picker(chat_id: int, ctx: BotContext, verb: str, missing_name: str | N
     return ""
 
 
+def _start_prompt(chat_id: int, ctx: BotContext, sub: UserSearch, kind: str) -> str:
+    ctx.pending[chat_id] = PendingInput(kind=kind, search_id=sub.search_id, created_at=datetime.now(timezone.utc))
+    prompt = ui.price_prompt(sub.name) if kind == "setprice" else ui.exclude_prompt(sub.name)
+    ctx.notifier.send_text(chat_id, prompt, reply_markup={"force_reply": True})
+    return ""
+
+
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if len(args) < 1:
         ctx.pending[chat_id] = PendingInput(
@@ -235,42 +242,52 @@ async def handle_searches(args: list[str], chat_id: int, ctx: BotContext) -> str
 
 
 async def handle_setprice(args: list[str], chat_id: int, ctx: BotContext) -> str:
+    if not args:
+        return _send_picker(chat_id, ctx, "pp", None)
+    sub = ctx.subscriptions.get_search(chat_id, args[0])
+    if sub is None:
+        return _send_picker(chat_id, ctx, "pp", args[0])
     if len(args) != 3:
-        return "Usage: /setprice <name> <min> <max>"
-    name, min_s, max_s = args
+        return _start_prompt(chat_id, ctx, sub, "setprice")
     try:
-        min_price = float(min_s)
-        max_price = float(max_s)
+        min_price = float(args[1])
+        max_price = float(args[2])
     except ValueError:
         return "min and max must be numbers."
-    if not ctx.subscriptions.set_price_filter(chat_id, name, min_price, max_price):
-        return f"No search named '{name}'."
-    return f"Updated price filter for '{name}'."
+    ctx.subscriptions.set_price_filter(chat_id, sub.name, min_price, max_price)
+    return f"Updated price filter for '{sub.name}'."
 
 
 async def handle_setexclude(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) < 2:
-        return "Usage: /setexclude <name> <word1,word2,...> (or 'none')"
-    name = args[0]
+    if not args:
+        return _send_picker(chat_id, ctx, "px", None)
+    sub = ctx.subscriptions.get_search(chat_id, args[0])
+    if sub is None:
+        return _send_picker(chat_id, ctx, "px", args[0])
+    if len(args) == 1:
+        return _start_prompt(chat_id, ctx, sub, "setexclude")
     value = " ".join(args[1:]).strip()
     exclude = None if value.lower() == "none" else value
-    if not ctx.subscriptions.set_exclude_keywords(chat_id, name, exclude):
-        return f"No search named '{name}'."
-    return f"Updated exclude list for '{name}'." if exclude else f"Cleared exclude list for '{name}'."
+    ctx.subscriptions.set_exclude_keywords(chat_id, sub.name, exclude)
+    return f"Updated exclude list for '{sub.name}'." if exclude else f"Cleared exclude list for '{sub.name}'."
 
 
 async def handle_setcondition(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    if len(args) < 2:
-        return "Usage: /setcondition <name> <condition> (or 'any')"
-    name = args[0]
+    if not args:
+        return _send_picker(chat_id, ctx, "cd", None)
+    sub = ctx.subscriptions.get_search(chat_id, args[0])
+    if sub is None:
+        return _send_picker(chat_id, ctx, "cd", args[0])
+    if len(args) == 1:
+        ctx.notifier.send_text(chat_id, f"Set condition for '{sub.name}':", reply_markup=ui.condition_keyboard(sub))
+        return ""
     value = " ".join(args[1:]).strip()
     condition = None if value.lower() == "any" else value
-    if not ctx.subscriptions.set_condition_filter(chat_id, name, condition):
-        return f"No search named '{name}'."
+    ctx.subscriptions.set_condition_filter(chat_id, sub.name, condition)
     return (
-        f"Set condition filter for '{name}' to '{condition}'."
+        f"Set condition filter for '{sub.name}' to '{condition}'."
         if condition
-        else f"Cleared condition filter for '{name}'."
+        else f"Cleared condition filter for '{sub.name}'."
     )
 
 

@@ -413,6 +413,90 @@ async def test_handle_setcondition_sets_and_clears(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler_name, verb",
+    [("handle_setprice", "pp"), ("handle_setexclude", "px"), ("handle_setcondition", "cd")],
+)
+async def test_filter_commands_without_a_name_send_a_picker(tmp_path, handler_name, verb):
+    import carouauto.commands as commands_module
+
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+
+    reply = await getattr(commands_module, handler_name)([], 111, ctx)
+
+    assert reply == ""
+    assert ctx.notifier.sent[-1][2]["inline_keyboard"][0][0]["callback_data"] == f"{verb}:{search_id}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "handler_name, args, verb",
+    [
+        ("handle_setprice", ["nope", "10", "20"], "pp"),
+        ("handle_setexclude", ["nope", "case"], "px"),
+        ("handle_setcondition", ["nope", "Brand", "new"], "cd"),
+    ],
+)
+async def test_filter_commands_with_an_unknown_name_send_a_picker(tmp_path, handler_name, args, verb):
+    import carouauto.commands as commands_module
+
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await getattr(commands_module, handler_name)(args, 111, ctx)
+
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert text == "No search named 'nope' — pick one:"
+    assert markup["inline_keyboard"][0][0]["callback_data"].startswith(f"{verb}:")
+
+
+@pytest.mark.asyncio
+async def test_setprice_with_only_a_name_starts_the_price_prompt(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+
+    reply = await handle_setprice(["speediance"], 111, ctx)
+
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert "min and max for 'speediance'" in text
+    assert markup == {"force_reply": True}
+    assert ctx.pending[111].kind == "setprice"
+    assert ctx.pending[111].search_id == search_id
+
+
+@pytest.mark.asyncio
+async def test_setexclude_with_only_a_name_starts_the_exclude_prompt(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+
+    reply = await handle_setexclude(["speediance"], 111, ctx)
+
+    assert reply == ""
+    assert ctx.pending[111].kind == "setexclude"
+    assert ctx.notifier.sent[-1][2] == {"force_reply": True}
+
+
+@pytest.mark.asyncio
+async def test_setcondition_with_only_a_name_sends_the_condition_picker(tmp_path):
+    ctx = make_ctx(tmp_path)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+
+    reply = await handle_setcondition(["speediance"], 111, ctx)
+
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert text == "Set condition for 'speediance':"
+    flat = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    assert f"cds:{search_id}:0" in flat
+
+
+@pytest.mark.asyncio
 async def test_handle_pause_and_resume(tmp_path):
     ctx = make_ctx(tmp_path)
     await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
