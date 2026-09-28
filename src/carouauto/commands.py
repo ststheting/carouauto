@@ -149,16 +149,27 @@ def _parse_optional_price_args(args: list[str], start_index: int) -> tuple[float
     return min_price, max_price
 
 
-def _finish_add(chat_id: int, name: str, url: str, min_price: float | None, max_price: float | None, ctx: BotContext) -> str:
+def _finish_add(
+    chat_id: int, name: str, url: str, min_price: float | None, max_price: float | None, ctx: BotContext
+) -> tuple[str, dict | None]:
     search_id = ctx.subscriptions.add_search(chat_id, name, url, min_price, max_price)
     if search_id is None:
-        return f"You already have a search named '{name}'. Use /remove first or pick a different name."
+        return f"You already have a search named '{name}'. Use /remove first or pick a different name.", None
+    sub = ctx.subscriptions.get_search_by_id(chat_id, search_id)
     minutes = round(ctx.poll_interval_seconds / 60)
-    return (
-        f"Added '{name}'. You'll be notified of new listings within ~{minutes} minutes of the next check.\n"
-        f"Bumped or stale (posted over {FRESH_WINDOW_DAYS} day ago) listings are hidden by default — "
-        f'use /showbumped "{name}" to see them too.'
+    header = (
+        f"Added '{name}'. Checks run every ~{minutes} minutes. "
+        "Bumped/stale listings are hidden by default — change it below."
     )
+    panel = ui.search_panel_text(sub, ctx.states.get(sub.url))
+    return f"{header}\n\n{panel}", ui.search_panel_keyboard(sub)
+
+
+def _reply_with(chat_id: int, ctx: BotContext, text: str, markup: dict | None) -> str:
+    if markup is None:
+        return text
+    ctx.notifier.send_text(chat_id, text, reply_markup=markup)
+    return ""
 
 
 async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
@@ -177,7 +188,8 @@ async def handle_add(args: list[str], chat_id: int, ctx: BotContext) -> str:
         return prices
     min_price, max_price = prices
     url = query if _is_url(query) else _build_carousell_search_url(query)
-    return _finish_add(chat_id, name, url, min_price, max_price, ctx)
+    text, markup = _finish_add(chat_id, name, url, min_price, max_price, ctx)
+    return _reply_with(chat_id, ctx, text, markup)
 
 
 async def handle_addurl(args: list[str], chat_id: int, ctx: BotContext) -> str:
@@ -188,7 +200,8 @@ async def handle_addurl(args: list[str], chat_id: int, ctx: BotContext) -> str:
     if isinstance(prices, str):
         return prices
     min_price, max_price = prices
-    return _finish_add(chat_id, name, url, min_price, max_price, ctx)
+    text, markup = _finish_add(chat_id, name, url, min_price, max_price, ctx)
+    return _reply_with(chat_id, ctx, text, markup)
 
 
 async def handle_remove(args: list[str], chat_id: int, ctx: BotContext) -> str:

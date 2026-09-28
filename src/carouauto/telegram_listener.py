@@ -210,8 +210,8 @@ async def _apply_pending_add_price(pending: PendingInput, text: str, chat_id: in
     min_price, max_price = parsed
     del ctx.pending[chat_id]
     url = pending.query if _is_url(pending.query) else _build_carousell_search_url(pending.query)
-    reply = _finish_add(chat_id, pending.query, url, min_price, max_price, ctx)
-    ctx.notifier.send_text(chat_id, reply)
+    text, markup = _finish_add(chat_id, pending.query, url, min_price, max_price, ctx)
+    ctx.notifier.send_text(chat_id, text, reply_markup=markup)
 
 
 async def run_command_listener(bot_token: str, ctx: BotContext, admin_chat_id: int) -> None:

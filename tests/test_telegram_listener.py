@@ -454,6 +454,9 @@ async def test_a_reply_while_pending_add_price_finishes_the_add(tmp_path):
     found = ctx.subscriptions.get_search(111, "speediance")
     assert (found.min_price, found.max_price) == (100.0, 500.0)
     assert 111 not in ctx.pending
+    _, text, markup = ctx.notifier.sent[-1]
+    assert text.startswith("Added 'speediance'.")
+    assert markup is not None
 
 
 def test_default_commands_exclude_admin_only_ones():

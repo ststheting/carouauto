@@ -243,6 +243,8 @@ async def test_afy_creates_the_search_from_the_pending_query(tmp_path):
     assert found.url == "https://www.carousell.sg/search/speediance?sort_by=3"
     assert "added" in result.text.lower()
     assert 111 not in ctx.pending
+    flat = [b["callback_data"] for row in result.reply_markup["inline_keyboard"] for b in row]
+    assert any(d.startswith("tg:") for d in flat)
 
 
 @pytest.mark.asyncio

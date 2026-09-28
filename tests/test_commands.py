@@ -7,11 +7,23 @@ from carouauto.subscriptions import SubscriptionStore
 REGISTRATION_PASSWORD = "let-me-in"
 
 
+class RecordingNotifier:
+    def __init__(self):
+        self.sent = []
+        self.documents = []
+
+    def send_text(self, chat_id, text, reply_markup=None):
+        self.sent.append((chat_id, text, reply_markup))
+
+    def send_document(self, chat_id, file_path, filename):
+        self.documents.append((chat_id, filename))
+
+
 def make_ctx(tmp_path):
     return BotContext(
         subscriptions=SubscriptionStore(str(tmp_path / "t.sqlite3")),
         seen_store=SeenStore(str(tmp_path / "t.sqlite3")),
-        notifier=None,
+        notifier=RecordingNotifier(),
         registration_password=REGISTRATION_PASSWORD,
         fetch_html=None,
         states={},
@@ -158,7 +170,9 @@ async def test_handle_addurl_creates_a_search(tmp_path):
 
     reply = await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
 
-    assert "speediance" in reply
+    assert reply == ""
+    chat_id, text, markup = ctx.notifier.sent[-1]
+    assert text.startswith("Added 'speediance'.")
     found = ctx.subscriptions.get_search(111, "speediance")
     assert found.url == "https://example.com/s"
     assert found.min_price is None
@@ -209,7 +223,8 @@ async def test_handle_add_with_single_arg_uses_it_as_both_name_and_query(tmp_pat
 
     reply = await handle_add(["speediance"], 111, ctx)
 
-    assert "speediance" in reply
+    assert reply == ""
+    assert "Added 'speediance'." in ctx.notifier.sent[-1][1]
     found = ctx.subscriptions.get_search(111, "speediance")
     assert found is not None
     assert found.url == "https://www.carousell.sg/search/speediance?sort_by=3"
@@ -413,10 +428,27 @@ async def test_handle_pause_and_resume(tmp_path):
 async def test_new_searches_hide_bumped_by_default(tmp_path):
     ctx = make_ctx(tmp_path)
 
-    reply = await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
+    await handle_addurl(["speediance", "https://example.com/s"], 111, ctx)
 
-    assert ctx.subscriptions.get_search(111, "speediance").hide_bumped is True
-    assert "showbumped" in reply.lower()
+    found = ctx.subscriptions.get_search(111, "speediance")
+    assert found.hide_bumped is True
+    text, markup = ctx.notifier.sent[-1][1], ctx.notifier.sent[-1][2]
+    assert "hidden by default" in text
+    by_data = {b["callback_data"]: b["text"] for row in markup["inline_keyboard"] for b in row}
+    assert by_data[f"tg:{found.search_id}:hb"] == "👁 Show bumped"
+
+
+@pytest.mark.asyncio
+async def test_added_panel_has_the_poll_interval_and_a_current_listings_button(tmp_path):
+    ctx = make_ctx(tmp_path)
+
+    await handle_add(["speediance"], 111, ctx)
+
+    _, text, markup = ctx.notifier.sent[-1]
+    assert "every ~5 minutes" in text
+    flat = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+    search_id = ctx.subscriptions.get_search(111, "speediance").search_id
+    assert f"li:{search_id}" in flat
 
 
 @pytest.mark.asyncio
@@ -662,7 +694,8 @@ async def test_dispatch_allows_registered_user_to_add(tmp_path):
 
     reply = await dispatch("add", ["speediance", "https://example.com"], 111, ctx)
 
-    assert "added" in reply.lower()
+    assert reply == ""
+    assert "added" in ctx.notifier.sent[-1][1].lower()
 
 
 @pytest.mark.asyncio

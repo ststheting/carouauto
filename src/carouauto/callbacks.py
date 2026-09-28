@@ -238,8 +238,8 @@ async def dispatch_callback(
             query = pending.query
             del ctx.pending[chat_id]
             url = query if _is_url(query) else _build_carousell_search_url(query)
-            text = _finish_add(chat_id, query, url, None, None, ctx)
-            return CallbackResult(text=text, reply_markup=None)
+            text, markup = _finish_add(chat_id, query, url, None, None, ctx)
+            return CallbackResult(text=text, reply_markup=markup)
 
         if verb == "afp":
             pending = ctx.pending.get(chat_id)
