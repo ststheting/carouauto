@@ -88,6 +88,17 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
         chat_id = message["chat"]["id"]
         text = message["text"]
 
+        # Bottom-keyboard taps arrive as plain text. They win over any pending
+        # prompt (the user navigated away) and go through dispatch so the
+        # normal registration gate applies.
+        menu_command = ui.MENU_BUTTONS.get(text.strip())
+        if menu_command is not None:
+            ctx.pending.pop(chat_id, None)
+            reply = await dispatch(menu_command, [], chat_id, ctx)
+            if reply:
+                ctx.notifier.send_text(chat_id, reply)
+            return
+
         pending = ctx.pending.get(chat_id)
         if pending is not None and not text.startswith("/"):
             age = (datetime.now(timezone.utc) - pending.created_at).total_seconds()

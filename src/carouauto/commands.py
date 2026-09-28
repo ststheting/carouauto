@@ -78,11 +78,18 @@ def parse_command(text: str) -> tuple[str, list[str]] | None:
 
 
 async def handle_start(args: list[str], chat_id: int, ctx: BotContext) -> str:
-    text = (
-        "Welcome to carouauto — a Carousell listing monitor.\n"
-        "Send /register <password> to get started, then /help for what you can do."
-    )
-    ctx.notifier.send_text(chat_id, text, reply_markup=ui.main_menu_keyboard())
+    if ctx.subscriptions.is_active(chat_id):
+        ctx.notifier.send_text(
+            chat_id,
+            "Welcome back to carouauto. Use the buttons below the chat box, or /help for everything else.",
+            reply_markup=ui.bottom_keyboard(),
+        )
+    else:
+        ctx.notifier.send_text(
+            chat_id,
+            "Welcome to carouauto — a Carousell listing monitor.\n"
+            "Send /register <password> to get started, then /help for what you can do.",
+        )
     return ""
 
 
@@ -92,7 +99,12 @@ async def handle_register(args: list[str], chat_id: int, ctx: BotContext) -> str
     if args[0] != ctx.registration_password:
         return "Incorrect password."
     if ctx.subscriptions.register(chat_id):
-        return "Registered! Try /add <name> to track a search. See /help for all commands."
+        ctx.notifier.send_text(
+            chat_id,
+            "Registered! Use the buttons below the chat box, or /add <name> to track a search.",
+            reply_markup=ui.bottom_keyboard(),
+        )
+        return ""
     return "You're already registered."
 
 
@@ -123,6 +135,10 @@ async def handle_help(args: list[str], chat_id: int, ctx: BotContext) -> str:
         "/help — this message"
     )
     ctx.notifier.send_text(chat_id, text, reply_markup=ui.main_menu_keyboard())
+    # A message carries one reply_markup, so the persistent bottom keyboard
+    # needs its own message.
+    if ctx.subscriptions.is_active(chat_id):
+        ctx.notifier.send_text(chat_id, "Menu buttons are below the chat box.", reply_markup=ui.bottom_keyboard())
     return ""
 
 

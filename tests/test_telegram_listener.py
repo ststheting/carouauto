@@ -489,3 +489,77 @@ async def test_set_bot_commands_registers_default_and_admin_scoped_lists():
     assert default_call[1]["commands"] == DEFAULT_BOT_COMMANDS
     assert admin_call[1]["commands"] == ADMIN_BOT_COMMANDS
     assert admin_call[1]["scope"] == {"type": "chat", "chat_id": 42}
+
+
+def _text_update(text, chat_id=111):
+    return {"update_id": 5, "message": {"chat": {"id": chat_id}, "text": text}}
+
+
+@pytest.mark.asyncio
+async def test_my_searches_button_routes_to_searches(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    await handle_update(_text_update("🔎 My searches"), ctx)
+
+    _, text, markup = ctx.notifier.sent[-1]
+    assert markup["inline_keyboard"][0][0]["callback_data"] == f"sp:{search_id}"
+
+
+@pytest.mark.asyncio
+async def test_my_searches_button_with_no_searches_says_so(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    await handle_update(_text_update("🔎 My searches"), ctx)
+
+    assert "no tracked searches" in ctx.notifier.sent[-1][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_add_search_button_starts_the_guided_add(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    await handle_update(_text_update("➕ Add search"), ctx)
+
+    assert ctx.pending[111].kind == "add_query"
+    assert ctx.notifier.sent[-1][2] == {"force_reply": True}
+
+
+@pytest.mark.asyncio
+async def test_status_button_replies_with_status(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+
+    await handle_update(_text_update("📊 Status"), ctx)
+
+    assert "speediance: not yet checked" in ctx.notifier.sent[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_menu_button_beats_a_pending_prompt_and_clears_it(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    search_id = ctx.subscriptions.add_search(111, "speediance", "https://example.com/s")
+    ctx.pending[111] = PendingInput(kind="setprice", search_id=search_id, created_at=datetime.now(timezone.utc))
+
+    await handle_update(_text_update("📊 Status"), ctx)
+
+    assert 111 not in ctx.pending
+    found = ctx.subscriptions.get_search_by_id(111, search_id)
+    assert (found.min_price, found.max_price) == (None, None)
+    assert "speediance" in ctx.notifier.sent[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_revoked_user_tapping_a_menu_button_is_told_to_register(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+    ctx.subscriptions.revoke(111)
+
+    await handle_update(_text_update("🔎 My searches"), ctx)
+
+    assert ctx.notifier.sent[-1][1] == "You need to /register first."

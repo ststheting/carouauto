@@ -72,33 +72,39 @@ def test_parse_command_normalizes_smart_quotes_from_mobile_keyboards():
 
 
 @pytest.mark.asyncio
-async def test_handle_start_sends_the_main_menu(tmp_path):
+async def test_handle_start_for_an_unregistered_user_says_register_and_has_no_keyboard(tmp_path):
     ctx = make_ctx(tmp_path)
-    sent = []
-
-    class FakeNotifier:
-        def send_text(self, chat_id, text, reply_markup=None):
-            sent.append((chat_id, text, reply_markup))
-
-    ctx.notifier = FakeNotifier()
 
     reply = await handle_start([], 111, ctx)
 
     assert reply == ""
-    chat_id, text, reply_markup = sent[0]
+    _, text, markup = ctx.notifier.sent[-1]
     assert "/register" in text
-    flat = [b["callback_data"] for row in reply_markup["inline_keyboard"] for b in row]
-    assert flat == ["mm:se", "mm:ad", "mm:st", "mm:he"]
+    assert markup is None
 
 
 @pytest.mark.asyncio
-async def test_handle_register_with_correct_password_succeeds(tmp_path):
+async def test_handle_start_for_a_registered_user_sends_the_bottom_keyboard(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    reply = await handle_start([], 111, ctx)
+
+    assert reply == ""
+    assert ctx.notifier.sent[-1][2]["keyboard"][0][0]["text"] == "🔎 My searches"
+
+
+@pytest.mark.asyncio
+async def test_handle_register_with_correct_password_sends_the_bottom_keyboard(tmp_path):
     ctx = make_ctx(tmp_path)
 
     reply = await handle_register([REGISTRATION_PASSWORD], 111, ctx)
 
     assert ctx.subscriptions.is_active(111) is True
-    assert "Registered" in reply or "registered" in reply.lower()
+    assert reply == ""
+    _, text, markup = ctx.notifier.sent[-1]
+    assert "registered" in text.lower()
+    assert markup["is_persistent"] is True
 
 
 @pytest.mark.asyncio
@@ -131,22 +137,29 @@ async def test_handle_register_twice_reports_already_registered(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_handle_help_sends_the_main_menu(tmp_path):
+async def test_handle_help_for_an_unregistered_user_sends_only_the_help(tmp_path):
     ctx = make_ctx(tmp_path)
-    sent = []
-
-    class FakeNotifier:
-        def send_text(self, chat_id, text, reply_markup=None):
-            sent.append((chat_id, text, reply_markup))
-
-    ctx.notifier = FakeNotifier()
 
     reply = await handle_help([], 111, ctx)
 
     assert reply == ""
-    chat_id, text, reply_markup = sent[0]
+    assert len(ctx.notifier.sent) == 1
+    _, text, markup = ctx.notifier.sent[0]
     assert "5 minute" in text.lower()
-    assert reply_markup["inline_keyboard"][0][0]["callback_data"] == "mm:se"
+    assert markup["inline_keyboard"][0][0]["callback_data"] == "mm:se"
+
+
+@pytest.mark.asyncio
+async def test_handle_help_for_a_registered_user_also_turns_on_the_bottom_keyboard(tmp_path):
+    ctx = make_ctx(tmp_path)
+    ctx.subscriptions.register(111)
+
+    await handle_help([], 111, ctx)
+
+    assert len(ctx.notifier.sent) == 2
+    _, text, markup = ctx.notifier.sent[1]
+    assert text == "Menu buttons are below the chat box."
+    assert markup["is_persistent"] is True
 
 
 from carouauto.commands import (
