@@ -23,6 +23,11 @@ class Poller:
             user_data_dir=self._user_data_dir,
             channel="chrome",
             headless=self._headless,
+            # Carousell's service worker (persisted in this profile) serves
+            # page requests, and Playwright's driver tracks a worker's traffic
+            # at the context level — it outlives page.close(), so the driver's
+            # heap grew ~85MB per round until it crashed every ~2 hours.
+            service_workers="block",
         )
 
     async def stop(self) -> None:
