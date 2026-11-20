@@ -9,6 +9,18 @@ from playwright_stealth import Stealth
 FETCH_ATTEMPTS = 3
 FETCH_RETRY_BACKOFF_SECONDS = 5
 
+# Hosts made unresolvable inside the browser. CleverTap's SDK (Carousell's
+# marketing/web-push tracker) fires ~2,300 never-answered requests per page
+# load in this headless browser, and the Playwright driver keeps closed pages
+# alive — along with every request they made — via a web-worker session that
+# never detaches. Together that grew the driver heap ~85MB per polling round
+# until it crashed every ~2 hours. Failing DNS keeps the SDK from loading at
+# all, without routing every request through Playwright's interception.
+BLOCKED_HOSTS = (
+    "d2r1yp2w7bby2u.cloudfront.net",  # clevertap.min.js
+    "*.clevertap-prod.com",  # CleverTap event endpoints
+)
+
 
 class Poller:
     def __init__(self, user_data_dir: str, headless: bool = False):
@@ -23,6 +35,7 @@ class Poller:
             user_data_dir=self._user_data_dir,
             channel="chrome",
             headless=self._headless,
+            args=["--host-resolver-rules=" + ", ".join(f"MAP {host} ~NOTFOUND" for host in BLOCKED_HOSTS)],
         )
 
     async def stop(self) -> None:
